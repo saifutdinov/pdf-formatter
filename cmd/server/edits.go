@@ -284,6 +284,78 @@ func (d *Doc) splitTable(op edit.Op, id string) (edit.Op, error) {
 	return op, nil
 }
 
+// historyEntry describes one step of the log for the history panel.
+type historyEntry struct {
+	Op   string `json:"op"`
+	At   string `json:"at,omitempty"`
+	Page int    `json:"page"` // current page index, -1 if none
+	Kind string `json:"kind,omitempty"`
+	Text string `json:"text,omitempty"` // a hint: object text, field name
+	New  bool   `json:"new,omitempty"`  // add without replacing: a new object
+}
+
+// History lists the steps done (oldest first) and the steps undone that
+// redo would bring back (next first).
+func (d *Doc) History() (done, undone []historyEntry) {
+	d.mu.Lock()
+	ops, redo := slices.Clone(d.log.Ops), slices.Clone(d.log.Redo)
+	d.mu.Unlock()
+	index := map[int]int{}
+	for i, sp := range d.specs() {
+		index[sp.ID] = i
+	}
+	entry := func(op edit.Op) historyEntry {
+		e := historyEntry{Op: op.Op, At: op.At, Page: -1, Text: op.Field, New: op.Op == "add" && len(op.Replaces) == 0}
+		if i, ok := index[op.Page]; ok && !docOps[op.Op] {
+			e.Page = i
+		}
+		if op.Object != nil {
+			e.Kind, e.Text = op.Object.Kind, op.Object.Text
+		}
+		if r := []rune(e.Text); len(r) > 40 {
+			e.Text = string(r[:40]) + "…"
+		}
+		return e
+	}
+	done, undone = []historyEntry{}, []historyEntry{}
+	for _, op := range ops {
+		done = append(done, entry(op))
+	}
+	for i := len(redo) - 1; i >= 0; i-- {
+		undone = append(undone, entry(redo[i]))
+	}
+	return done, undone
+}
+
+// Goto undoes or redoes steps until n of them are done: one change for any
+// distance in the history.
+func (d *Doc) Goto(n int) (editState, error) {
+	if err := d.checkEditable(""); err != nil {
+		return editState{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if n < 0 || n > len(d.log.Ops)+len(d.log.Redo) {
+		return editState{}, &userError{"Нет такого шага"}
+	}
+	if n == len(d.log.Ops) {
+		return d.stateLocked(), nil
+	}
+	for len(d.log.Ops) > n {
+		k := len(d.log.Ops) - 1
+		d.log.Redo = append(d.log.Redo, d.log.Ops[k])
+		d.log.Ops = d.log.Ops[:k]
+	}
+	for len(d.log.Ops) < n {
+		k := len(d.log.Redo) - 1
+		d.log.Ops = append(d.log.Ops, d.log.Redo[k])
+		d.log.Redo = d.log.Redo[:k]
+	}
+	st, err := d.commitLocked()
+	st.Structure = true
+	return st, err
+}
+
 // lastOp names the operation undo (or redo) would take back.
 func (d *Doc) lastOp(redo bool) string {
 	d.mu.Lock()
@@ -728,6 +800,7 @@ func (d *Doc) Do(op edit.Op) (editState, error) {
 	if err := d.validate(op); err != nil {
 		return editState{}, err
 	}
+	op.At = time.Now().UTC().Format(time.RFC3339)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.log.Ops = append(d.log.Ops, op)

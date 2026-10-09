@@ -304,6 +304,35 @@ func routes(store *Store, lib *Library, web http.FileSystem) *http.ServeMux {
 		writeJSON(w, map[string]any{"meta": d.Meta, "pages": pages, "state": d.State(), "security": d.Security()})
 	})
 
+	mux.HandleFunc("GET /api/docs/{id}/history", func(w http.ResponseWriter, r *http.Request) {
+		d, err := store.Get(r.PathValue("id"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		done, undone := d.History()
+		writeJSON(w, map[string]any{"done": done, "undone": undone})
+	})
+
+	mux.HandleFunc("POST /api/docs/{id}/goto", func(w http.ResponseWriter, r *http.Request) {
+		d, err := store.Get(r.PathValue("id"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		var body struct{ N int }
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
+			writeErr(w, &userError{"Нет номера шага"})
+			return
+		}
+		st, err := d.Goto(body.N)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, st)
+	})
+
 	mux.HandleFunc("GET /api/docs/{id}/fields", func(w http.ResponseWriter, r *http.Request) {
 		d, err := store.Get(r.PathValue("id"))
 		if err != nil {

@@ -26,6 +26,9 @@ export type FormField = {
   widgets: { page: number; rect: [number, number, number, number]; on?: string }[]
 }
 
+/** A step of the edit log, for the history panel. */
+export type HistoryEntry = { op: string; at?: string; page: number; kind?: string; text?: string; new?: boolean }
+
 /** Protection of an encrypted document. */
 export type Security = { method: string; owner: boolean; password: boolean; editable: boolean }
 
@@ -332,6 +335,9 @@ export const api = {
     })
   },
   undo: (id: string) => serial(() => call<EditState>(`/api/docs/${id}/undo`, { method: 'POST' })),
+  history: (id: string) => call<{ done: HistoryEntry[]; undone: HistoryEntry[] }>(`/api/docs/${id}/history`),
+  goto: (id: string, n: number) =>
+    serial(() => call<EditState>(`/api/docs/${id}/goto`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n }) })),
   redo: (id: string) => serial(() => call<EditState>(`/api/docs/${id}/redo`, { method: 'POST' })),
   library: () => call<{ fonts: LibFont[]; default: string; ready: boolean }>('/api/fonts'),
   uploadFonts: (files: FileList | File[]) => {

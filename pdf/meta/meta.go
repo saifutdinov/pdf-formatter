@@ -252,6 +252,9 @@ type Sanitize struct {
 func (s Sanitize) Any() bool { return s.PieceInfo || s.Thumbnails || s.JavaScript || s.Embedded }
 
 // Clean removes hidden data from the catalog and pages.
+// OwnPiece is the key of the editor's data in page piece dictionaries.
+const OwnPiece = "PDFFormatter"
+
 func Clean(u *cos.Update, s Sanitize) {
 	if !s.Any() {
 		return
@@ -286,6 +289,10 @@ func Clean(u *cos.Update, s Sanitize) {
 				delete(page, k)
 				changed = true
 			}
+		}
+		// The editor's own piece stays: it keeps its objects editable.
+		if own := g.Dict(g.Dict(p.Dict["PieceInfo"])[OwnPiece]); s.PieceInfo && own != nil {
+			page["PieceInfo"] = cos.Dict{OwnPiece: own}
 		}
 		if changed {
 			u.Set(p.Ref, page)

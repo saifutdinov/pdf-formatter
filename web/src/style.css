@@ -213,12 +213,14 @@ a {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap; /* a narrow sidebar takes the tabs in two rows */
   border-bottom: 1px solid var(--line);
 }
 
 .tabs button {
-  flex: 1;
-  padding: 8px 4px;
+  flex: 1 0 auto;
+  padding: 8px 6px;
+  white-space: nowrap;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
@@ -1191,4 +1193,29 @@ a {
   accent-color: var(--accent);
   background: none;
   border: none;
+}
+
+/* History */
+.history ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.history-row:hover {
+  background: var(--panel);
+}
+.history-row.current {
+  background: var(--accent-soft);
+  cursor: default;
+}
+.history-row.undone {
+  opacity: 0.5;
 }

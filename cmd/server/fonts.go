@@ -221,6 +221,18 @@ func (l *Library) Default() *LibFont {
 	return l.byID[l.defaultIDLocked()]
 }
 
+// ByPSName returns the face with a PostScript name, or nil.
+func (l *Library) ByPSName(ps string) *LibFont {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, f := range l.fonts {
+		if f.PSName == ps {
+			return f
+		}
+	}
+	return nil
+}
+
 // Variant returns the face of the same family closest to bold and italic
 // (the font itself when the family has nothing better).
 func (l *Library) Variant(id string, bold, italic bool) *LibFont {

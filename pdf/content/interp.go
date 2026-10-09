@@ -137,7 +137,8 @@ type Item struct {
 	Axis      bool // a path of horizontal and vertical segments only (rules, boxes)
 	// Image or form XObject
 	Name     cos.Name
-	Artifact bool // inside /Artifact marked content
+	Artifact bool   // inside /Artifact marked content
+	Own      string // inside /PFObj marked content: the editor object it draws
 }
 
 // FontCache shares fonts across pages: one *font.Font per font dictionary.
@@ -590,6 +591,13 @@ func (in *Interp) add(it Item, st *State) {
 	for _, m := range st.MarkedStack {
 		if len(m.Args) > 0 && m.Args[0] == cos.Name("Artifact") {
 			it.Artifact = true
+		}
+		if len(m.Args) > 1 && m.Args[0] == cos.Name("PFObj") {
+			if p, ok := m.Args[1].(cos.Dict); ok {
+				if id, ok := p["ID"].(cos.String); ok {
+					it.Own = string(id)
+				}
+			}
 		}
 	}
 	in.Items = append(in.Items, it)

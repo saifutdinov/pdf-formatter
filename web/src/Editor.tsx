@@ -36,6 +36,7 @@ import { AttachLink, LinkProps } from './Links'
 import { OutlineEditor } from './OutlineEditor'
 import { PasswordDialog } from './PasswordDialog'
 import { FormLayer } from './FormLayer'
+import { HistoryPanel } from './HistoryPanel'
 import { Inspector, Thumbs } from './Sidebar'
 import { TextEditor, type TextEdit } from './TextEditor'
 import { RichTextEditor } from './RichTextEditor'
@@ -53,7 +54,7 @@ function widenSingleLine(b: Block, p: PageInfo): number[] {
 }
 
 const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5]
-type Tab = 'pages' | 'outline' | 'layout' | 'fonts' | 'doc' | 'objects'
+type Tab = 'pages' | 'outline' | 'layout' | 'fonts' | 'doc' | 'history' | 'objects'
 
 type PageData = { blocks: Block[]; links: Link[] }
 
@@ -725,6 +726,7 @@ function EditorView({ id }: { id: string }) {
                 ['layout', 'Макет'],
                 ['fonts', 'Шрифты'],
                 ['doc', 'Документ'],
+                ['history', 'История'],
                 ['objects', 'Объекты'],
               ] as [Tab, string][]
             ).map(([t, label]) => (
@@ -749,6 +751,7 @@ function EditorView({ id }: { id: string }) {
             )}
             {tab === 'fonts' && <FontsPanel fonts={fonts} progress={progress} />}
             {tab === 'doc' && <DocPanel id={id} rev={state?.rev} run={run} />}
+            {tab === 'history' && <HistoryPanel id={id} rev={state?.rev} run={run} />}
             {tab === 'objects' && <Inspector id={id} pageNum={pages[page]?.num} />}
           </div>
         </aside>

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"pdf-formatter/pdf/content"
 	"pdf-formatter/pdf/cos"
@@ -56,6 +57,7 @@ type Op struct {
 	NewIDs  []int      `json:"newIds,omitempty"`  // page.import: ids of the copies (negative)
 	Decrypt bool       `json:"decrypt,omitempty"` // security: the clean copy drops the encryption
 	Next    *Object    `json:"next,omitempty"`    // table.split: the rest of the table, on the new page NewID
+	At      string     `json:"at,omitempty"`      // when it was done (RFC 3339), for the history
 	Field   string     `json:"field,omitempty"`   // field: fully qualified name
 	Value   string     `json:"value,omitempty"`   // field: the new value (a state name for buttons)
 }
@@ -528,7 +530,7 @@ func (r *renderer) page(p cos.Page, pe *PageEdit) error {
 			if err != nil {
 				return err
 			}
-			objOps = append(objOps, ops...)
+			objOps = append(objOps, markOwn(o, ops)...)
 		}
 		for _, w := range pe.flat {
 			n := r.name("PFw")
@@ -578,6 +580,28 @@ func (r *renderer) page(p cos.Page, pe *PageEdit) error {
 	}
 	if resChanged {
 		page["Resources"] = res
+	}
+	// The model of the own objects, for editing the file again later.
+	var own []*Object
+	for _, o := range pe.Objects {
+		if persistent(o) {
+			own = append(own, o)
+		}
+	}
+	pieces, _ := cos.Copy(u.Dict(page["PieceInfo"])).(cos.Dict)
+	if pieces[meta.OwnPiece] != nil || len(own) > 0 {
+		if pieces == nil {
+			pieces = cos.Dict{}
+		}
+		delete(pieces, meta.OwnPiece)
+		if len(own) > 0 {
+			pieces[meta.OwnPiece] = r.piece(own)
+			page["LastModified"] = cos.String(time.Now().UTC().Format("D:20060102150405Z"))
+		}
+		page["PieceInfo"] = pieces
+		if len(pieces) == 0 {
+			delete(page, "PieceInfo")
+		}
 	}
 	if len(pe.Links) > 0 || len(pe.DelLinks) > 0 || pe.Fit != nil || len(pe.flat) > 0 {
 		page["Annots"] = r.annots(p, pe, page, analysis)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"pdf-formatter/pdf/content"
 	"pdf-formatter/pdf/cos"
 	"pdf-formatter/pdf/edit"
 )
@@ -145,11 +147,63 @@ func (s *Store) Import(name string, r io.Reader) (*Meta, error) {
 		return nil, err
 	}
 	if !locked {
+		if err := s.restorePieces(dir, d); err != nil {
+			return nil, err
+		}
 		s.mu.Lock()
 		s.open[m.ID] = s.newDoc(*m, d)
 		s.mu.Unlock()
 	}
 	return m, nil
+}
+
+// restorePieces turns the editor objects stored in a file (a document
+// edited here and downloaded) back into objects: each one replaces the
+// items that show it. Fonts are found again by PostScript name, images and
+// SVG come back as uploads. Undoing these first steps shows the file as it
+// was downloaded.
+func (s *Store) restorePieces(dir string, d *cos.Document) error {
+	pieces := edit.ReadPieces(d, content.NewFontCache())
+	if len(pieces) == 0 {
+		return nil
+	}
+	font := func(p edit.Piece, id string) string {
+		if lf := s.lib.ByPSName(p.Fonts[id]); lf != nil {
+			return lf.ID
+		}
+		return "" // the default font
+	}
+	var log editLog
+	for _, p := range pieces {
+		for name, data := range p.Assets {
+			if validAsset(name) {
+				os.MkdirAll(filepath.Join(dir, "assets"), 0o755)
+				if err := os.WriteFile(filepath.Join(dir, "assets", name), data, 0o644); err != nil {
+					return err
+				}
+			}
+		}
+		for _, o := range p.Objects {
+			members := p.Members[o.ID]
+			o.ID = fmt.Sprintf("o%d", len(log.Ops)+1) // ids of this document's log
+			o.Font = font(p, o.Font)
+			o.Runs = slices.Clone(o.Runs)
+			for k := range o.Runs {
+				if o.Runs[k].Font != "" {
+					o.Runs[k].Font = font(p, o.Runs[k].Font)
+				}
+			}
+			op := edit.Op{Op: "add", Page: p.Page.Num, Object: &o}
+			if len(members) > 0 {
+				op.Replaces = []string{members[0]}
+				op.Members = map[string][]string{members[0]: members}
+			}
+			log.Ops = append(log.Ops, op)
+		}
+	}
+	log.Rev = len(log.Ops)
+	b, _ := json.Marshal(log)
+	return os.WriteFile(filepath.Join(dir, "ops.json"), b, 0o644)
 }
 
 func (s *Store) newDoc(m Meta, pdf *cos.Document) *Doc {
