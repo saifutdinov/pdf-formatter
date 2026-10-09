@@ -1,0 +1,34 @@
+# docker compose -f compose.dev.yml up --watch  →  http://127.0.0.1:5173
+services:
+  api:
+    build: { context: ., target: dev }
+    command: go run ./cmd/server
+    environment:
+      ADDR: 0.0.0.0:8080
+      DATA_DIR: /data
+      SYSTEM_FONTS: /fonts
+    volumes:
+      - ./data:/data
+      - gocache:/root/.cache/go-build
+      - ~/Library/Fonts:/fonts/user:ro
+    develop:
+      watch:
+        - path: ./
+          target: /src
+          action: sync+restart
+          ignore: [web/, data/]
+
+  web:
+    image: node:22-alpine
+    working_dir: /web
+    command: sh -c "npm install && npx vite --host 0.0.0.0"
+    environment:
+      API_URL: http://api:8080
+    ports: ["127.0.0.1:5173:5173"]
+    volumes:
+      - ./web:/web
+      - webmodules:/web/node_modules
+
+volumes:
+  gocache:
+  webmodules:

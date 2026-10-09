@@ -1,0 +1,13 @@
+services:
+  app:
+    build: { context: ., target: prod }
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ./data:/data
+      # Шрифты Mac только на чтение. Системные папки Docker Desktop по умолчанию
+      # не пробрасывает: добавьте /Library/Fonts и /System/Library/Fonts в
+      # Settings → Resources → File Sharing и раскомментируйте строки ниже.
+      - ~/Library/Fonts:/fonts/user:ro
+      # - /Library/Fonts:/fonts/library:ro
+      # - /System/Library/Fonts:/fonts/system:ro
+    restart: unless-stopped

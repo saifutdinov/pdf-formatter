@@ -1,0 +1,5 @@
+Отчёт по проекту
+
+Это простой текстовый файл, превращённый в PDF через cupsfilter (Quartz).
+Plain ASCII line: Hello, PDF world!
+Цифры: 1234567890

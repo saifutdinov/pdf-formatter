@@ -1,0 +1,7 @@
+#!/bin/sh
+# Main executable of PDF Formatter.app. It starts the server in the
+# background and exits at once, so every double click runs it again: a
+# second start just opens the running editor in the browser.
+LOG="$HOME/Library/Application Support/PDF Formatter"
+mkdir -p "$LOG"
+nohup "$(dirname "$0")/../Resources/pdf-formatter" >>"$LOG/log.txt" 2>&1 &

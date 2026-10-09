@@ -1,0 +1,8 @@
+/data/
+/dist/
+/web/node_modules/
+/web/dist/
+/testdata/corpus/big.pdf
+# Commercial fonts: never commit or publish (see fonts/README.md)
+/fonts/licensed/
+.DS_Store
