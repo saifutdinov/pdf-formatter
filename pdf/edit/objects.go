@@ -11,7 +11,6 @@ import (
 	"math"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"pdf-formatter/pdf/content"
 	"pdf-formatter/pdf/cos"
@@ -35,8 +34,10 @@ type Object struct {
 	Stroke      string     `json:"stroke,omitempty"`
 	StrokeWidth float64    `json:"strokeWidth,omitempty"`
 	Opacity     float64    `json:"opacity"`
-	// Text
+	// Text: Runs give parts of it their own style; Text is then their
+	// concatenation.
 	Text       string  `json:"text,omitempty"`
+	Runs       []Run   `json:"runs,omitempty"`
 	Font       string  `json:"font,omitempty"` // library font id; "" = default
 	Size       float64 `json:"size,omitempty"`
 	Color      string  `json:"color,omitempty"`
@@ -147,84 +148,6 @@ func (e Env) Sources() Sources {
 		cache[asset] = d
 		return d
 	}
-}
-
-// Line is one laid-out line of a text object.
-type Line struct {
-	Text    string  // including the spaces it breaks at: lines concatenate to the paragraph
-	Width   float64 // pt, without trailing spaces
-	Justify bool    // stretch to the box width (not the last line of a paragraph)
-}
-
-func isBreak(r rune) bool { return r == ' ' || r == '\t' } // a no-break space is not
-
-// wordEnd is where the first word of s ends: at a space or tab, or after a
-// hyphen between letters (пере-|нос), where a line may break as well.
-func wordEnd(s string) int {
-	prev := rune(0)
-	for i, r := range s {
-		if isBreak(r) {
-			return i
-		}
-		if r == '-' && unicode.IsLetter(prev) {
-			if next, _ := utf8.DecodeRuneInString(s[i+1:]); unicode.IsLetter(next) {
-				return i + 1
-			}
-		}
-		prev = r
-	}
-	return len(s)
-}
-
-// Wrap breaks text into lines no wider than max (pt): greedy at spaces and
-// tabs, long words by characters. Paragraphs are separated by '\n'. Every
-// character is kept: the spaces at a break stay at the end of the line.
-func Wrap(face *font.Face, text string, size, max float64) []Line {
-	width := func(s string) float64 { return face.TextWidth(strings.TrimRightFunc(s, isBreak)) / 1000 * size }
-	var out []Line
-	for _, para := range strings.Split(text, "\n") {
-		cur := ""
-		for rest := para; rest != ""; {
-			// The next word with the spaces after it.
-			end := wordEnd(rest)
-			sp := strings.IndexFunc(rest[end:], func(r rune) bool { return !isBreak(r) })
-			if sp < 0 {
-				sp = len(rest) - end
-			}
-			word, tok := rest[:end], rest[:end+sp]
-			rest = rest[end+sp:]
-			if width(cur+word) <= max || strings.TrimFunc(cur, isBreak) == "" && width(word) <= max {
-				cur += tok
-				continue
-			}
-			if strings.TrimFunc(cur, isBreak) != "" {
-				out = append(out, Line{Text: cur, Width: width(cur), Justify: true})
-				cur = ""
-			}
-			for width(cur+word) > max && utf8.RuneCountInString(word) > 1 { // break a long word by characters
-				r := []rune(word)
-				n := 1
-				for n < len(r) && width(cur+string(r[:n+1])) <= max {
-					n++
-				}
-				out = append(out, Line{Text: cur + string(r[:n]), Width: width(cur + string(r[:n]))})
-				cur, word = "", string(r[n:])
-				tok = word + tok[len(tok)-sp:]
-			}
-			cur += tok
-		}
-		out = append(out, Line{Text: cur, Width: width(cur)})
-		out[len(out)-1].Justify = false
-	}
-	return out
-}
-
-// TextHeight is the height of laid-out text including padding.
-func (o *Object) TextHeight(face *font.Face) float64 {
-	lines := Wrap(face, o.Text, o.Size, o.contentW())
-	asc, desc, _, _, _ := face.Metrics()
-	n := max(1, len(lines))
-	return o.Padding[0] + o.Padding[2] + float64(n-1)*o.lineHeight()*o.Size + (asc-desc)/1000*o.Size
 }
 
 func (o *Object) contentW() float64 { return max(1, o.W-o.Padding[1]-o.Padding[3]) }
@@ -412,67 +335,6 @@ func (r *renderer) object(o *Object) ([]content.Op, error) {
 		out = append(out, op("EMC"))
 	}
 	return out, nil
-}
-
-func (r *renderer) text(o *Object) ([]content.Op, error) {
-	fe, fname, err := r.fontFor(o.Font)
-	if err != nil {
-		return nil, err
-	}
-	face := fe.e.Face
-	size := o.Size
-	if size <= 0 {
-		size = 12
-	}
-	lines := Wrap(face, o.Text, size, o.contentW())
-	asc, desc, _, _, _ := face.Metrics()
-	asc, desc = asc/1000*size, desc/1000*size
-	lh := o.lineHeight() * size
-	textH := float64(len(lines)-1)*lh + asc - desc
-	top := -o.Padding[0]
-	switch inner := o.H - o.Padding[0] - o.Padding[2]; o.VAlign {
-	case "middle":
-		top -= (inner - textH) / 2
-	case "bottom":
-		top -= inner - textH
-	}
-	col := []cos.Object{cos.Int(0), cos.Int(0), cos.Int(0)}
-	if c, ok := colorArgs(o.Color); ok {
-		col = c
-	}
-	out := []content.Op{op("BT"), op("Tf", fname, cos.Real(size)), op("rg", col...)}
-	cw := o.contentW()
-	for i, l := range lines {
-		if l.Text == "" {
-			continue
-		}
-		x := o.Padding[3]
-		switch o.Align {
-		case "center":
-			x += (cw - l.Width) / 2
-		case "right":
-			x += cw - l.Width
-		}
-		y := top - asc - float64(i)*lh
-		out = append(out, op("Tm", reals(1, 0, 0, 1, x, y)...))
-		shown := strings.TrimRightFunc(l.Text, isBreak)
-		spaces := strings.Count(shown, " ")
-		if o.Align == "justify" && l.Justify && spaces > 0 {
-			// Tw does not apply to 2-byte codes: widen gaps with TJ (§9.3.3).
-			gap := -(cw - l.Width) / float64(spaces) * 1000 / size
-			var arr cos.Array
-			for k, w := range strings.Split(shown, " ") {
-				if k > 0 {
-					arr = append(arr, fe.e.Encode(" "), cos.Real(gap))
-				}
-				arr = append(arr, fe.e.Encode(w))
-			}
-			out = append(out, op("TJ", arr))
-		} else {
-			out = append(out, op("Tj", fe.e.Encode(l.Text)))
-		}
-	}
-	return append(out, op("ET")), nil
 }
 
 // table draws backgrounds, cell texts and the grid.

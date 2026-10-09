@@ -185,6 +185,30 @@ func (d *Doc) validatePageOp(op edit.Op) error {
 	return nil
 }
 
+// normalizeRuns keeps Text equal to the runs and drops empty runs; a single
+// run in the object's own style is plain text.
+func normalizeRuns(o *edit.Object) {
+	o.Runs = slices.DeleteFunc(slices.Clone(o.Runs), func(r edit.Run) bool { return r.Text == "" })
+	if len(o.Runs) == 0 {
+		o.Runs = nil
+		return
+	}
+	o.Text = edit.RunsText(o.Runs)
+}
+
+// libFontID is the library font used when text in a font of the file is
+// edited: the best match, or the default font.
+func (d *Doc) libFontID(name string, bold, italic bool) string {
+	if lf := d.lib.Match(name, bold, italic); lf != nil {
+		return lf.ID
+	}
+	if def := d.lib.Default(); def != nil {
+		// No such family: the default one, in the same weight and slant.
+		return d.lib.Variant(def.ID, bold, italic).ID
+	}
+	return ""
+}
+
 // securityInfo is the protection of an encrypted document, for the UI.
 type securityInfo struct {
 	Method   string `json:"method"`
@@ -384,6 +408,11 @@ func (d *Doc) complete(op edit.Op) (edit.Op, error) {
 		o.ID = id
 		op.Object = &o
 	}
+	if (op.Op == "add" || op.Op == "update") && op.Object != nil && len(op.Object.Runs) > 0 {
+		o := *op.Object
+		normalizeRuns(&o)
+		op.Object = &o
+	}
 	if (op.Op == "page.insert" || op.Op == "toc") && op.NewID == 0 {
 		d.mu.Lock()
 		op.NewID = -(d.log.Rev + 1)
@@ -482,8 +511,18 @@ func (d *Doc) complete(op edit.Op) (edit.Op, error) {
 		}
 	}
 	obj.Text = cmp.Or(b.Flow, b.Text) // every character as extracted
-	if op.Object != nil && op.Object.Text != "" {
-		obj.Text = op.Object.Text
+	obj.Runs = b.Runs                 // and every word in its style
+	if op.Object != nil && (op.Object.Text != "" || len(op.Object.Runs) > 0) {
+		obj.Text, obj.Runs = op.Object.Text, op.Object.Runs
+	}
+	normalizeRuns(&obj)
+	// Styles change widths (a bold word is wider): widen until the text
+	// wraps into no more lines than it had.
+	for k := 0; len(obj.Runs) > 0 && k < 25; k++ {
+		if l, err := obj.Lines(d.env().Face); err != nil || len(l) <= len(lines) {
+			break
+		}
+		obj.W *= 1.02
 	}
 	return edit.Op{Op: "add", Page: op.Page, Object: &obj, Replaces: op.Blocks}, nil
 }
@@ -821,6 +860,10 @@ func fitBlock(b blockJSON, m [6]float64) blockJSON {
 		b.Quad[k] = round2(b.Quad[k])
 	}
 	b.Size = round2(b.Size * m[0])
+	b.styles = slices.Clone(b.styles)
+	for k := range b.styles {
+		b.styles[k].Size = round2(b.styles[k].Size * m[0])
+	}
 	return b
 }
 
@@ -947,10 +990,9 @@ func (d *Doc) Blocks(i int) ([]blockJSON, error) {
 			b = fitBlock(b, *sp.Fit)
 		}
 		if b.Kind == "text" {
-			if lf := d.lib.Match(b.Font, b.Bold, b.Italic); lf != nil {
-				b.LibFont = lf.ID
-			} else if def := d.lib.Default(); def != nil {
-				b.LibFont = def.ID
+			b.LibFont = d.libFontID(b.Font, b.Bold, b.Italic)
+			for _, s := range b.styles {
+				b.Runs = append(b.Runs, edit.Run{Text: s.Text, Font: d.libFontID(s.Font, s.Bold, s.Italic), Size: s.Size, Color: s.Color})
 			}
 		}
 		if pe == nil {
@@ -987,7 +1029,7 @@ func (d *Doc) Blocks(i int) ([]blockJSON, error) {
 		if face, err := env.Face(o.Font); err == nil {
 			switch {
 			case o.Kind == "text" && o.AutoHeight:
-				o.H = o.TextHeight(face)
+				o.H = o.TextHeight(env.Face)
 			case o.Kind == "table":
 				o.W, o.H = o.TableSize(face)
 				rowHeights = o.TableLayout(face)

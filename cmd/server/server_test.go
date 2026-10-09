@@ -15,6 +15,7 @@ import (
 
 	"pdf-formatter/pdf/content"
 	"pdf-formatter/pdf/cos"
+	"pdf-formatter/pdf/edit"
 	"pdf-formatter/pdf/layout"
 )
 
@@ -178,10 +179,19 @@ func TestEndToEnd(t *testing.T) {
 	call("GET", "/api/docs/"+meta.ID+"/pages/0/blocks", nil, "", &blocks)
 	var para blockJSON
 	for _, b := range blocks.Blocks {
-		if b.Object == nil && strings.Contains(b.Text, "\n") {
+		if b.Object == nil && strings.HasPrefix(b.Text, "Настоящий договор") {
 			para = b
 			break
 		}
+	}
+	// Bold «ООО «Ромашка»» and italic «Иваном Петровым» come as runs in
+	// library fonts of their own.
+	runFonts := map[string]bool{}
+	for _, r := range para.Runs {
+		runFonts[r.Font] = true
+	}
+	if len(para.Runs) < 5 || len(runFonts) < 3 || edit.RunsText(para.Runs) != cmp.Or(para.Flow, para.Text) {
+		t.Errorf("paragraph runs %+v", para.Runs)
 	}
 	st = op(map[string]any{"op": "adopt", "page": page, "blocks": []string{para.ID}})
 	call("GET", "/api/docs/"+meta.ID+"/pages/0/blocks", nil, "", &blocks)
@@ -191,6 +201,9 @@ func TestEndToEnd(t *testing.T) {
 			found = true
 			if want := cmp.Or(para.Flow, para.Text); b.Object.Text != want {
 				t.Errorf("adopted text %q, want %q", b.Object.Text, want)
+			}
+			if len(b.Object.Runs) != len(para.Runs) {
+				t.Errorf("adopted runs %+v", b.Object.Runs)
 			}
 		}
 	}

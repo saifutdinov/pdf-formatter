@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'preact/hooks'
-import { toView, type EdObject, type PageInfo } from './api'
+import { toView, type EdObject, type PageInfo, type Run } from './api'
 import { useLibFont } from './fontface'
 
 export type TextEdit = {
@@ -7,6 +7,7 @@ export type TextEdit = {
   blockId: string
   own: boolean // editor object (update) or original block (adopt)
   text: string
+  runs?: Run[] // parts in their own style
   font: string
   size: number
   color: string

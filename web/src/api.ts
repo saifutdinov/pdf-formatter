@@ -8,6 +8,9 @@ export type Meta = {
   password?: boolean // encrypted with a user password: unlock first
 }
 
+/** A part of a text in its own style; empty fields take the object's. */
+export type Run = { text: string; font?: string; size?: number; color?: string; underline?: boolean }
+
 /** Protection of an encrypted document. */
 export type Security = { method: string; owner: boolean; password: boolean; editable: boolean }
 
@@ -128,6 +131,7 @@ export type Block = {
   angle?: number
   text?: string
   flow?: string // text for editing: soft line breaks joined, every character kept
+  runs?: Run[] // the flow in several styles (library fonts)
   font?: string
   fontRef?: number
   size?: number
@@ -155,6 +159,7 @@ export type EdObject = {
   strokeWidth?: number
   opacity: number
   text?: string
+  runs?: Run[] // parts of the text in their own style; text is their concatenation
   font?: string
   size?: number
   color?: string

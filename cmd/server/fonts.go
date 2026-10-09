@@ -221,6 +221,34 @@ func (l *Library) Default() *LibFont {
 	return l.byID[l.defaultIDLocked()]
 }
 
+// Variant returns the face of the same family closest to bold and italic
+// (the font itself when the family has nothing better).
+func (l *Library) Variant(id string, bold, italic bool) *LibFont {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	base := l.byID[id]
+	if base == nil {
+		return nil
+	}
+	best, score := base, -1
+	for _, f := range l.fonts {
+		if f.Family != base.Family {
+			continue
+		}
+		s := 0
+		if f.Bold == bold {
+			s += 2
+		}
+		if f.Italic == italic {
+			s++
+		}
+		if s > score || s == score && f == base {
+			best, score = f, s
+		}
+	}
+	return best
+}
+
 func (l *Library) SetDefault(id string) error {
 	l.mu.Lock()
 	if _, ok := l.byID[id]; !ok {

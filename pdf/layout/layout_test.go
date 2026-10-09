@@ -114,6 +114,13 @@ trailer <</Root 1 0 R>>
 	got := map[string]string{} // text → flow
 	for _, b := range pg.Blocks {
 		got[b.Text] = b.Flow
+		var parts strings.Builder
+		for _, r := range b.Runs {
+			parts.WriteString(r.Text)
+		}
+		if parts.String() != b.Flow {
+			t.Errorf("runs %q do not add up to %q", parts.String(), b.Flow)
+		}
 	}
 	for text, flow := range map[string]string{
 		"a  b c":                           "a  b c",

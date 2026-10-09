@@ -262,3 +262,63 @@ func TestSVGObject(t *testing.T) {
 		t.Errorf("svg bbox %v", box)
 	}
 }
+
+// Runs: parts of a text object in their own font, size, colour, underline.
+func TestStyledRuns(t *testing.T) {
+	d := open(t, "chrome.pdf")
+	p := d.Pages()[0]
+	runs := []Run{
+		{Text: "Обычный текст, "},
+		{Text: "жирный красный", Font: "PTSans-Bold", Color: "#cc0000", Size: 16},
+		{Text: " и подчёркнутый хвост абзаца, который переносится на следующую строку.", Underline: true},
+	}
+	obj := &Object{ID: "o1", Kind: "text", Matrix: [6]float64{1, 0, 0, 1, 60, 300}, W: 220, H: 80, Size: 12, Opacity: 1,
+		Text: RunsText(runs), Runs: runs, AutoHeight: true}
+	env := testEnv(t)
+	face, _ := env.Face("")
+	if h := obj.TextHeight(env.Face); h <= 2*12 {
+		t.Errorf("text height %v: expected several lines", h)
+	}
+	st, _ := obj.styles(env.Face)
+	lines := layoutText(obj.runs(), st, obj.contentW())
+	if lines[0].Size != 16 || len(lines[0].Segs) < 2 {
+		t.Errorf("first line %+v", lines[0])
+	}
+	var all strings.Builder
+	for _, l := range lines {
+		all.WriteString(l.Text)
+	}
+	if all.String() != obj.Text {
+		t.Errorf("layout lost text: %q", all.String())
+	}
+	_ = face
+
+	d2 := edited(t, d, []Op{{Op: "add", Page: p.Ref.Num, Object: obj}})
+	pg := layout.Analyze(d2, d2.Pages()[0], content.NewFontCache())
+	var flow string
+	sizes, reds, rules := map[float64]bool{}, 0, 0
+	for _, b := range pg.Blocks {
+		if b.Kind == "text" && strings.HasPrefix(b.Text, "Обычный") {
+			flow = b.Flow
+			for _, i := range b.Items {
+				it := pg.Items[i]
+				sizes[math.Round(it.Size)] = true
+				if it.State.Fill == [3]float64{0.8, 0, 0} {
+					reds++
+				}
+			}
+		}
+		if b.Kind == "path" && b.BBox[2]-b.BBox[0] > 20 && b.BBox[3]-b.BBox[1] < 2 {
+			rules++
+		}
+	}
+	if flow != obj.Text {
+		t.Errorf("read back %q", flow)
+	}
+	if !sizes[12] || !sizes[16] || reds == 0 {
+		t.Errorf("styles not applied: sizes %v, red runs %d", sizes, reds)
+	}
+	if rules == 0 {
+		t.Error("no underline")
+	}
+}

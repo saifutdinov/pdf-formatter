@@ -29,9 +29,10 @@ type Block struct {
 	Items     []int  // indices into Page.Items
 	Quad      [8]float64
 	BBox      content.Rect
-	Angle     float64 // degrees, counter-clockwise
-	Text      string  // as shown: visual lines joined by '\n'
-	Flow      string  // for re-wrapping: soft line breaks joined, hard ones kept as '\n'
+	Angle     float64   // degrees, counter-clockwise
+	Text      string    // as shown: visual lines joined by '\n'
+	Flow      string    // for re-wrapping: soft line breaks joined, hard ones kept as '\n'
+	Runs      []TextRun // Flow by the item each part comes from (styles of the words)
 	Font      *font.Font
 	Size      float64
 	Color     [3]float64
@@ -95,6 +96,13 @@ func newBlock(kind string, items []content.Item, idx []int) Block {
 	return b
 }
 
+// TextRun is a part of a block's text and the item it was shown by; spaces
+// and line breaks added between items belong to the part before them.
+type TextRun struct {
+	Item int
+	Text string
+}
+
 type run struct {
 	item      int
 	u0, u1, v float64 // along / across the baseline in the rotated frame
@@ -109,7 +117,9 @@ type line struct {
 	runs   []run
 	u0, u1 float64
 	v      float64
-	size   float64
+	size   float64         // largest: sets the baseline
+	chars  map[float64]int // characters per font size
+	body   float64         // the size most of the line is set in
 	angle  float64
 	asc    float64
 	desc   float64
@@ -175,6 +185,10 @@ func textBlocks(items []content.Item) []Block {
 			lines = append(lines, best)
 		}
 		best.runs = append(best.runs, r)
+		if best.chars == nil {
+			best.chars = map[float64]int{}
+		}
+		best.chars[math.Round(r.size*10)/10] += utf8.RuneCountInString(items[r.item].Text)
 		best.u0, best.u1 = min(best.u0, r.u0), max(best.u1, r.u1)
 		if r.size > best.size { // superscripts do not move the baseline
 			best.size, best.v = r.size, r.v
@@ -201,7 +215,16 @@ func textBlocks(items []content.Item) []Block {
 		}
 	}
 
-	// Lines → paragraphs: stacked lines with similar size and overlap.
+	for _, l := range lines {
+		for s, w := range l.chars {
+			if w > l.chars[l.body] || w == l.chars[l.body] && s > l.body {
+				l.body = s
+			}
+		}
+	}
+
+	// Lines → paragraphs: stacked lines with similar size and overlap; a
+	// larger word or two does not make a line a heading.
 	slices.SortStableFunc(lines, func(a, b *line) int {
 		if c := cmp.Compare(angleKey(a.angle), angleKey(b.angle)); c != 0 {
 			return c
@@ -221,7 +244,7 @@ func textBlocks(items []content.Item) []Block {
 				continue
 			}
 			dv := last.v - l.v
-			ratio := l.size / last.size
+			ratio := l.body / last.body
 			overlap := min(p.u1, l.u1) - max(p.u0, l.u0)
 			if dv > 0.5*l.size && dv < 1.9*max(l.size, last.size) && ratio > 0.8 && ratio < 1.25 && overlap > 0 {
 				best = p
@@ -238,6 +261,7 @@ func textBlocks(items []content.Item) []Block {
 	var out []Block
 	for _, p := range paras {
 		var idx []int
+		var parts []TextRun
 		texts := make([]string, len(p.lines))
 		for k, l := range p.lines {
 			slices.SortFunc(l.runs, func(a, b run) int { return cmp.Compare(a.u0, b.u0) })
@@ -248,18 +272,22 @@ func textBlocks(items []content.Item) []Block {
 				// already has whitespace there.
 				if j > 0 && r.u0-l.runs[j-1].u1 > 0.2*r.size && !endsSpace(sb.String()) && !startsSpace(t) {
 					sb.WriteByte(' ')
+					parts[len(parts)-1].Text += " "
 				}
 				sb.WriteString(t)
+				parts = append(parts, TextRun{r.item, t})
 				idx = append(idx, r.item)
 			}
 			texts[k] = sb.String()
+			if k > 0 {
+				// The break before this line goes to the last part of the previous one.
+				first := len(parts) - len(l.runs) - 1
+				parts[first].Text += lineBreak(texts[k-1], texts[k], p.u1-p.lines[k-1].u1, firstWord(items, l))
+			}
 		}
 		var flow strings.Builder
-		for k, t := range texts {
-			if k > 0 {
-				flow.WriteString(lineBreak(texts[k-1], t, p.u1-p.lines[k-1].u1, firstWord(items, p.lines[k])))
-			}
-			flow.WriteString(t)
+		for _, part := range parts {
+			flow.WriteString(part.Text)
 		}
 		slices.Sort(idx)
 		b := newBlock("text", items, idx)
@@ -277,6 +305,7 @@ func textBlocks(items []content.Item) []Block {
 		b.Angle = theta * 180 / math.Pi
 		b.Text = strings.Join(texts, "\n")
 		b.Flow = flow.String()
+		b.Runs = parts
 		lead := items[idx[0]]
 		b.Font = lead.State.Font
 		b.Size = first.size

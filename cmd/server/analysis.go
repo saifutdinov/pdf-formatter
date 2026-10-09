@@ -38,6 +38,19 @@ type blockJSON struct {
 	Object     *edit.Object `json:"object,omitempty"`     // editor objects only
 	RowHeights []float64    `json:"rowHeights,omitempty"` // tables: computed row heights
 	Items      []string     `json:"-"`                    // original blocks: layout.ItemID of the items
+	Runs       []edit.Run   `json:"runs,omitempty"`       // text in several styles, with library fonts
+	styles     []textStyle  // the same as found in the file (Blocks matches the fonts)
+}
+
+// textStyle is a part of a block's text in one style of the file.
+type textStyle struct {
+	Text, Font, Color string
+	Bold, Italic      bool
+	Size              float64
+}
+
+func (s textStyle) same(o textStyle) bool {
+	return s.Font == o.Font && s.Bold == o.Bold && s.Italic == o.Italic && s.Size == o.Size && s.Color == o.Color
 }
 
 type fontJSON struct {
@@ -148,6 +161,21 @@ func (a *Analysis) Page(i int) []blockJSON {
 		if b.Font != nil {
 			bj.Font, bj.Bold, bj.Italic = b.Font.Name, b.Font.Bold, b.Font.Italic
 			bj.FontRef = pg.Items[b.Items[0]].State.FontRef.Num
+		}
+		for _, r := range b.Runs {
+			it := pg.Items[r.Item]
+			s := textStyle{Text: r.Text, Size: round2(it.Size), Color: hexColor(it.State.Fill)}
+			if f := it.State.Font; f != nil {
+				s.Font, s.Bold, s.Italic = f.Name, f.Bold, f.Italic
+			}
+			if n := len(bj.styles); n > 0 && bj.styles[n-1].same(s) {
+				bj.styles[n-1].Text += s.Text
+			} else {
+				bj.styles = append(bj.styles, s)
+			}
+		}
+		if len(bj.styles) == 1 { // one style: the block's own fields say it all
+			bj.styles = nil
 		}
 		blocks = append(blocks, bj)
 	}

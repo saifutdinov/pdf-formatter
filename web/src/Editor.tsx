@@ -35,6 +35,8 @@ import { OutlineEditor } from './OutlineEditor'
 import { PasswordDialog } from './PasswordDialog'
 import { Inspector, Thumbs } from './Sidebar'
 import { TextEditor, type TextEdit } from './TextEditor'
+import { RichTextEditor } from './RichTextEditor'
+import { compact, variant, type StyledRun } from './richtext'
 import { GAP, Viewer } from './Viewer'
 
 /** Same rule as the server: a single unrotated line may grow to the mirrored right margin. */
@@ -273,7 +275,28 @@ function EditorView({ id }: { id: string }) {
     move: (from: number, to: number) =>
       editOp(from, { op: 'page.move', after: from < to ? pages[to].num : to === 0 ? 0 : pages[to - 1].num }),
   }
-  const updateObject = (pageIndex: number, object: EdObject) => editOp(pageIndex, { op: 'update', object })
+  // Font, size or colour of a whole text object carry over to its styled
+  // runs: bold stays bold in the new family, sizes keep their proportion.
+  const updateObject = (pageIndex: number, object: EdObject) => {
+    const old = (blocksOf(pageIndex) ?? []).find((x) => x.object?.id === object.id)?.object
+    if (old?.runs && object.runs === old.runs) {
+      const scale = old.size && object.size ? object.size / old.size : 1
+      object = {
+        ...object,
+        runs: object.runs.map((r) => {
+          const f = r.font && library.find((x) => x.id === r.font)
+          const font = object.font !== old.font && f ? variant(library, object.font || defaultFont, f.bold, f.italic)?.id : r.font
+          return {
+            ...r,
+            font: font === object.font ? undefined : font,
+            size: r.size && Math.round(r.size * scale * 10) / 10,
+            color: object.color !== old.color ? undefined : r.color,
+          }
+        }),
+      }
+    }
+    return editOp(pageIndex, { op: 'update', object })
+  }
 
   const cellEdit = (pageIndex: number, b: Block, o: EdObject, rowHeights: number[], r: number, c: number): TextEdit => {
     const [x, y, w, h] = cellRect(o, rowHeights, r, c)
@@ -332,6 +355,7 @@ function EditorView({ id }: { id: string }) {
             blockId: b.id,
             own: true,
             text: o.text ?? '',
+            runs: o.runs,
             font: o.font || defaultFont,
             size: o.size ?? 12,
             color: o.color ?? '#000000',
@@ -346,6 +370,7 @@ function EditorView({ id }: { id: string }) {
             own: false,
             quad: widenSingleLine(b, pages[pageIndex]),
             text: b.flow ?? b.text ?? '',
+            runs: b.runs,
             font: b.libFont ?? defaultFont,
             size: b.size ?? 12,
             color: b.color ?? '#000000',
@@ -354,6 +379,18 @@ function EditorView({ id }: { id: string }) {
             padding: [0, 0, 0, 0],
           },
     )
+  }
+
+  // Text in several styles: plain text when it is all in the block's style.
+  const commitRich = (te: TextEdit, runs: StyledRun[]) => {
+    setTextEdit(null)
+    const { text, runs: styled } = compact(runs, te)
+    if (te.own) {
+      const b = (blocksOf(te.page) ?? []).find((x) => x.id === te.blockId)
+      if (b?.object) updateObject(te.page, { ...b.object, text, runs: styled })
+    } else {
+      editOp(te.page, { op: 'adopt', blocks: [te.blockId], object: { text, runs: styled } as EdObject }).then(() => setSelected(new Set()))
+    }
   }
 
   const commitText = (te: TextEdit, text: string) => {
@@ -718,7 +755,18 @@ function EditorView({ id }: { id: string }) {
               />
             )}
             overlayHTML={(i, s) =>
-              textEdit?.page === i && (
+              textEdit?.page === i &&
+              (!textEdit.cell ? (
+                <RichTextEditor
+                  key={textEdit.blockId}
+                  edit={textEdit}
+                  page={pages[i]}
+                  scale={s}
+                  library={library}
+                  onCommit={(runs) => commitRich(textEdit, runs)}
+                  onCancel={() => setTextEdit(null)}
+                />
+              ) : (
                 <TextEditor
                   key={`${textEdit.blockId}:${textEdit.cell ?? ''}`}
                   edit={textEdit}
@@ -728,7 +776,7 @@ function EditorView({ id }: { id: string }) {
                   onCancel={() => setTextEdit(null)}
                   onTab={textEdit.cell ? (t, back) => tabCell(textEdit, t, back) : undefined}
                 />
-              )
+              ))
             }
           />
         ) : (
