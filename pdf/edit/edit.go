@@ -55,6 +55,7 @@ type Op struct {
 	From    []int      `json:"from,omitempty"`    // page.import: page indices, empty = all
 	NewIDs  []int      `json:"newIds,omitempty"`  // page.import: ids of the copies (negative)
 	Decrypt bool       `json:"decrypt,omitempty"` // security: the clean copy drops the encryption
+	Next    *Object    `json:"next,omitempty"`    // table.split: the rest of the table, on the new page NewID
 	Field   string     `json:"field,omitempty"`   // field: fully qualified name
 	Value   string     `json:"value,omitempty"`   // field: the new value (a state name for buttons)
 }
@@ -195,6 +196,28 @@ func Fold(ops []Op) (*Edits, error) {
 			continue
 		case "flatten":
 			ed.Flatten = true
+			continue
+		case "table.split":
+			// The table keeps the rows that fit; the rest goes to the new page.
+			if op.Object == nil || op.Next == nil {
+				return nil, fmt.Errorf("edit: table.split without tables")
+			}
+			for _, part := range []struct {
+				page int
+				o    Object
+			}{{op.Page, *op.Object}, {op.NewID, *op.Next}} {
+				pe := out[part.page]
+				if pe == nil {
+					pe = newPageEdit()
+					out[part.page] = pe
+				}
+				o := part.o
+				if i, _ := pe.object(o.ID); i >= 0 {
+					pe.Objects[i] = &o
+				} else {
+					pe.Objects = append(pe.Objects, &o)
+				}
+			}
 			continue
 		case "page.insert", "page.delete", "page.move", "page.rotate", "page.margins", "toc", "page.import":
 			continue // folded by Pages

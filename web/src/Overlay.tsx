@@ -1,5 +1,5 @@
 import { useRef, useState } from 'preact/hooks'
-import { apply, deltaToUser, fromView, invert, objectQuad, rotateAround, toView, translate, type Block, type EdObject, type Link, type PageInfo } from './api'
+import { apply, deltaToUser, fromView, invert, objectQuad, rotateAround, spanAt, toView, translate, type Block, type EdObject, type Link, type PageInfo } from './api'
 
 const area = (q: number[]) => Math.abs((q[2] - q[0]) * (q[7] - q[1]) - (q[3] - q[1]) * (q[6] - q[0]))
 
@@ -126,7 +126,8 @@ export function PageOverlay({ page, index, scale, blocks, links, selected, editi
       for (let acc = 0; c < cols.length - 1 && lx > acc + cols[c]; c++) acc += cols[c]
       let r = 0
       for (let acc = 0; r < b.rowHeights.length - 1 && -ly > acc + b.rowHeights[r]; r++) acc += b.rowHeights[r]
-      onEditText(index, b, [r, c])
+      const s = spanAt(b.object, r, c) // a merged cell opens as one
+      onEditText(index, b, [s.row, s.col])
       return true
     }
     return false

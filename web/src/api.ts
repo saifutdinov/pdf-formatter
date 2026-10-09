@@ -98,6 +98,7 @@ export type EditOp = {
     | 'security'
     | 'field'
     | 'flatten'
+    | 'table.split'
     | 'link'
     | 'outline'
     | 'page.insert'
@@ -191,14 +192,58 @@ export type EdObject = {
   rows?: { cells: string[]; height?: number }[]
   headerFill?: string
   cellPad?: number
+  spans?: Span[] // merged cells
 }
 
 /** Cell rectangle of a table in its local frame: x, top y (≤ 0), width, height. */
+/** Merged table cells: rows × cols from (row, col); the first holds the text. */
+export type Span = { row: number; col: number; rows: number; cols: number }
+
+/** The cells a cell belongs to: its merge, or itself. */
+export function spanAt(o: EdObject, r: number, c: number): Span {
+  return o.spans?.find((s) => r >= s.row && r < s.row + s.rows && c >= s.col && c < s.col + s.cols) ?? { row: r, col: c, rows: 1, cols: 1 }
+}
+
+/** Box of the cell (merged cells as one) in the table frame: x, top y, w, h. */
 export function cellRect(o: EdObject, rowHeights: number[], r: number, c: number): [number, number, number, number] {
+  const s = spanAt(o, r, c)
   const cols = o.cols ?? []
-  const x = cols.slice(0, c).reduce((a, b) => a + b, 0)
-  const y = -rowHeights.slice(0, r).reduce((a, b) => a + b, 0)
-  return [x, y, cols[c], rowHeights[r]]
+  const sum = (a: number[]) => a.reduce((x, y) => x + y, 0)
+  return [sum(cols.slice(0, s.col)), -sum(rowHeights.slice(0, s.row)), sum(cols.slice(s.col, s.col + s.cols)), sum(rowHeights.slice(s.row, s.row + s.rows))]
+}
+
+/**
+ * Merges the cells of a rectangle, grown to take in every merge it touches;
+ * the texts join into the first cell, line by line.
+ */
+export function mergeCells(o: EdObject, r0: number, c0: number, r1: number, c1: number): EdObject {
+  const spans = o.spans ?? []
+  for (let grown = true; grown; ) {
+    grown = false
+    for (const s of spans) {
+      if (s.row <= r1 && s.row + s.rows - 1 >= r0 && s.col <= c1 && s.col + s.cols - 1 >= c0) {
+        const n = [Math.min(r0, s.row), Math.min(c0, s.col), Math.max(r1, s.row + s.rows - 1), Math.max(c1, s.col + s.cols - 1)]
+        if (n[0] !== r0 || n[1] !== c0 || n[2] !== r1 || n[3] !== c1) [r0, c0, r1, c1, grown] = [...n, true] as [number, number, number, number, boolean]
+      }
+    }
+  }
+  const rows = (o.rows ?? []).map((row) => ({ ...row, cells: [...row.cells] }))
+  const texts: string[] = []
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      const t = rows[r]?.cells[c]?.trim()
+      if (t) texts.push(t)
+      if (rows[r] && (r !== r0 || c !== c0)) rows[r].cells[c] = ''
+    }
+  if (rows[r0]) rows[r0].cells[c0] = texts.join('\n')
+  const kept = spans.filter((s) => s.row > r1 || s.row + s.rows - 1 < r0 || s.col > c1 || s.col + s.cols - 1 < c0)
+  return { ...o, rows, spans: [...kept, { row: r0, col: c0, rows: r1 - r0 + 1, cols: c1 - c0 + 1 }] }
+}
+
+/** Undoes the merge a cell belongs to. */
+export function splitCells(o: EdObject, r: number, c: number): EdObject {
+  const s = spanAt(o, r, c)
+  return { ...o, spans: (o.spans ?? []).filter((x) => x.row !== s.row || x.col !== s.col) }
 }
 
 export type FontInfo = {

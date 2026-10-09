@@ -1,4 +1,4 @@
-import { blocksBox, fmtMM, MM, type Block, type EdObject, type FontInfo, type LibFont, type PageInfo } from './api'
+import { blocksBox, fmtMM, mergeCells, MM, spanAt, splitCells, type Block, type EdObject, type FontInfo, type LibFont, type PageInfo } from './api'
 import { FontBadge, fontFor } from './Panels'
 
 const KIND: Record<string, string> = {
@@ -25,6 +25,8 @@ type Props = {
   onEditText: () => void
   onReplaceImage: (file: File) => void
   linkSection?: preact.ComponentChildren
+  cell?: [number, number] // table: the cell edited last
+  onSplitTable?: () => void
 }
 
 const parseNum = (s: string) => Number(s.replace(',', '.'))
@@ -78,12 +80,39 @@ function Seg<T extends string>({ value, options, onChange }: { value: T; options
   )
 }
 
-function TableSection({ o, set }: { o: EdObject; set: (patch: Partial<EdObject>) => void }) {
+function TableSection({ o, set, cell, onSplit }: { o: EdObject; set: (patch: Partial<EdObject>) => void; cell?: [number, number]; onSplit?: () => void }) {
   const cols = o.cols ?? []
   const rows = o.rows ?? []
   const width = cols.reduce((a, b) => a + b, 0)
+  const span = cell && spanAt(o, cell[0], cell[1])
   return (
     <div class="props-section">
+      {span && (
+        <div class="hf-row">
+          <span>
+            Ячейка {span.row + 1}×{span.col + 1}:
+          </span>
+          <button
+            class="btn small"
+            disabled={span.col + span.cols >= cols.length}
+            title="Объединить с ячейкой справа"
+            onClick={() => set(mergeCells(o, span.row, span.col, span.row + span.rows - 1, span.col + span.cols))}
+          >
+            Объединить →
+          </button>
+          <button
+            class="btn small"
+            disabled={span.row + span.rows >= rows.length}
+            title="Объединить с ячейкой снизу"
+            onClick={() => set(mergeCells(o, span.row, span.col, span.row + span.rows, span.col + span.cols - 1))}
+          >
+            ↓
+          </button>
+          <button class="btn small" disabled={span.rows * span.cols === 1} onClick={() => set(splitCells(o, span.row, span.col))}>
+            Разделить
+          </button>
+        </div>
+      )}
       <div class="hf-row">
         <span>Строк: {rows.length}</span>
         <button class="btn small" onClick={() => set({ rows: [...rows, { cells: cols.map(() => '') }] })}>
@@ -141,7 +170,15 @@ function TableSection({ o, set }: { o: EdObject; set: (patch: Partial<EdObject>)
         <span>Поля ячеек</span>
         <NumField value={fmtMM(o.cellPad ?? 4)} suffix="мм" onCommit={(v) => set({ cellPad: Math.max(0, v * MM) })} />
       </div>
-      <p class="muted small">Двойной клик по ячейке — правка, Tab — следующая ячейка. Границы столбцов можно тянуть мышью.</p>
+      {onSplit && (
+        <button class="btn small" title="Строки, которые не помещаются на странице, уйдут на новую страницу после неё; шапка повторится" onClick={onSplit}>
+          Перенести продолжение на новую страницу
+        </button>
+      )}
+      <p class="muted small">
+        Двойной клик по ячейке — правка, Tab — следующая ячейка; объединять можно ячейку, которую правили последней. Границы столбцов можно тянуть
+        мышью.
+      </p>
     </div>
   )
 }
@@ -272,7 +309,7 @@ function ObjectProps(p: Props & { obj: EdObject; position: preact.JSX.Element })
         </button>
       )}
       {(o.kind === 'image' || o.kind === 'svg') && <ReplaceImage onFile={p.onReplaceImage} />}
-      {o.kind === 'table' && <TableSection o={o} set={set} />}
+      {o.kind === 'table' && <TableSection o={o} set={set} cell={p.cell} onSplit={p.onSplitTable} />}
       <dl>
         {p.position}
         {o.kind === 'table' ? null : (

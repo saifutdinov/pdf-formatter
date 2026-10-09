@@ -6,6 +6,7 @@ import {
   blocksBox,
   apply,
   cellRect,
+  spanAt,
   deltaToUser,
   fromView,
   MM,
@@ -310,7 +311,10 @@ function EditorView({ id }: { id: string }) {
     return editOp(pageIndex, { op: 'update', object })
   }
 
+  // The table cell edited last: merging works on it.
+  const [lastCell, setLastCell] = useState<{ block: string; cell: [number, number] } | null>(null)
   const cellEdit = (pageIndex: number, b: Block, o: EdObject, rowHeights: number[], r: number, c: number): TextEdit => {
+    setLastCell({ block: b.id, cell: [r, c] })
     const [x, y, w, h] = cellRect(o, rowHeights, r, c)
     const quad = [...apply(o.matrix, x, y - h), ...apply(o.matrix, x + w, y - h), ...apply(o.matrix, x + w, y), ...apply(o.matrix, x, y)]
     const pad = o.cellPad ?? 4
@@ -347,6 +351,11 @@ function EditorView({ id }: { id: string }) {
     const o = setCell(cur, te.cell[0], te.cell[1], text)
     const cols = o.cols?.length ?? 1
     let idx = te.cell[0] * cols + te.cell[1] + (back ? -1 : 1)
+    // Cells covered by a merge are skipped.
+    for (; idx > 0 && idx < (o.rows?.length ?? 0) * cols; idx += back ? -1 : 1) {
+      const s = spanAt(o, Math.floor(idx / cols), idx % cols)
+      if (s.row === Math.floor(idx / cols) && s.col === idx % cols) break
+    }
     idx = Math.max(0, idx)
     const r = Math.floor(idx / cols)
     const next = r >= (o.rows?.length ?? 0) ? setCell(o, r, 0, '') : o
@@ -831,6 +840,8 @@ function EditorView({ id }: { id: string }) {
             onUpdate={(o) => updateObject(selPage, o)}
             onEditText={() => selBlocks[0] && editText(selPage, selBlocks[0])}
             onReplaceImage={(f) => selBlocks[0] && replaceImage(selPage, selBlocks[0], f)}
+            cell={lastCell && lastCell.block === selBlocks[0]?.id ? lastCell.cell : undefined}
+            onSplitTable={() => selBlocks[0] && editOp(selPage, { op: 'table.split', blocks: [selBlocks[0].id] })}
             linkSection={
               selBlocks.length === 1 && (
                 <AttachLink

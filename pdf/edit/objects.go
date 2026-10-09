@@ -55,16 +55,37 @@ type Object struct {
 	Rows       []TableRow `json:"rows,omitempty"`
 	HeaderFill string     `json:"headerFill,omitempty"` // background of the first row; "" = no header row
 	CellPad    float64    `json:"cellPad,omitempty"`
+	Spans      []Span     `json:"spans,omitempty"` // merged cells
 }
 
-// TableRow is one table row. ponytail: no merged cells and no splitting
-// across pages; both fit this model (spans per cell, a row cursor per page).
+// Span merges the cells of Rows×Cols starting at Row, Col: the first one
+// holds the text, the others are covered.
+type Span struct {
+	Row  int `json:"row"`
+	Col  int `json:"col"`
+	Rows int `json:"rows"`
+	Cols int `json:"cols"`
+}
+
+// SpanAt returns the cells a cell belongs to (itself when not merged) and
+// whether the cell is the first of them.
+func (o *Object) SpanAt(r, c int) (Span, bool) {
+	for _, s := range o.Spans {
+		if r >= s.Row && r < s.Row+s.Rows && c >= s.Col && c < s.Col+s.Cols {
+			return s, r == s.Row && c == s.Col
+		}
+	}
+	return Span{r, c, 1, 1}, true
+}
+
+// TableRow is one table row.
 type TableRow struct {
 	Cells  []string `json:"cells"`
 	Height float64  `json:"height,omitempty"` // minimum height (pt), 0 = by content
 }
 
-// TableLayout returns row heights: each row is as tall as its tallest cell.
+// TableLayout returns row heights: each row is as tall as its tallest cell;
+// a cell merged over several rows makes the last of them taller if needed.
 func (o *Object) TableLayout(face *font.Face) []float64 {
 	size := o.Size
 	if size <= 0 {
@@ -73,19 +94,65 @@ func (o *Object) TableLayout(face *font.Face) []float64 {
 	asc, desc, _, _, _ := face.Metrics()
 	lineH := (asc - desc) / 1000 * size
 	heights := make([]float64, len(o.Rows))
+	type tall struct {
+		s    Span
+		need float64
+	}
+	var multi []tall
 	for r, row := range o.Rows {
-		h := row.Height
-		for c, w := range o.Cols {
+		heights[r] = row.Height
+		for c := range o.Cols {
+			s, first := o.SpanAt(r, c)
+			if !first {
+				continue
+			}
 			text := ""
 			if c < len(row.Cells) {
 				text = row.Cells[c]
 			}
-			n := max(1, len(Wrap(face, text, size, max(1, w-2*o.CellPad))))
-			h = max(h, float64(n-1)*o.lineHeight()*size+lineH+2*o.CellPad)
+			n := max(1, len(Wrap(face, text, size, max(1, o.spanWidth(s)-2*o.CellPad))))
+			need := float64(n-1)*o.lineHeight()*size + lineH + 2*o.CellPad
+			if s.Rows > 1 {
+				multi = append(multi, tall{s, need})
+			} else {
+				heights[r] = max(heights[r], need)
+			}
 		}
-		heights[r] = h
+	}
+	for _, t := range multi {
+		last := min(t.s.Row+t.s.Rows, len(heights)) - 1
+		have := 0.0
+		for _, h := range heights[t.s.Row : last+1] {
+			have += h
+		}
+		if t.need > have {
+			heights[last] += t.need - have
+		}
 	}
 	return heights
+}
+
+// spanWidth is the width of merged cells.
+func (o *Object) spanWidth(s Span) float64 {
+	w := 0.0
+	for c := s.Col; c < min(s.Col+s.Cols, len(o.Cols)); c++ {
+		w += o.Cols[c]
+	}
+	return w
+}
+
+// cellBox is the rectangle of merged cells: x, y (top, local frame), w, h.
+func (o *Object) cellBox(s Span, heights []float64) (x, y, w, h float64) {
+	for _, c := range o.Cols[:min(s.Col, len(o.Cols))] {
+		x += c
+	}
+	for _, rh := range heights[:min(s.Row, len(heights))] {
+		y -= rh
+	}
+	for r := s.Row; r < min(s.Row+s.Rows, len(heights)); r++ {
+		h += heights[r]
+	}
+	return x, y, o.spanWidth(s), h
 }
 
 // TableSize computes the table width and height.
@@ -364,40 +431,47 @@ func (r *renderer) table(o *Object) ([]content.Op, error) {
 	if fill, ok := colorArgs(o.Fill); ok {
 		out = append(out, op("rg", fill...), op("re", reals(0, -h, w, h)...), op("f"))
 	}
-	if fill, ok := colorArgs(o.HeaderFill); ok && len(heights) > 0 {
-		out = append(out, op("rg", fill...), op("re", reals(0, -heights[0], w, heights[0])...), op("f"))
-	}
-	y := 0.0
-	for ri, row := range o.Rows {
-		x := 0.0
-		for c, cw := range o.Cols {
-			if c < len(row.Cells) && strings.TrimSpace(row.Cells[c]) != "" {
-				cell := &Object{Kind: "text", Matrix: [6]float64{1, 0, 0, 1, x, y}, W: cw, H: heights[ri], Text: row.Cells[c],
-					Font: o.Font, Size: o.Size, Color: o.Color, Align: o.Align, VAlign: "top", LineHeight: o.LineHeight,
-					Padding: [4]float64{o.CellPad, o.CellPad, o.CellPad, o.CellPad}}
-				ops, err := r.text(cell)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, op("q"), op("cm", reals(1, 0, 0, 1, x, y)...))
-				out = append(out, ops...)
-				out = append(out, op("Q"))
+	var cells []Span // the visible cells: merged ones once
+	for ri := range o.Rows {
+		for c := range o.Cols {
+			if s, first := o.SpanAt(ri, c); first {
+				cells = append(cells, s)
 			}
-			x += cw
 		}
-		y -= heights[ri]
 	}
-	if stroke, ok := colorArgs(o.Stroke); ok && o.StrokeWidth > 0 {
-		out = append(out, op("RG", stroke...), op("w", cos.Real(o.StrokeWidth)), op("re", reals(0, -h, w, h)...))
-		x := 0.0
-		for _, cw := range o.Cols[:max(0, len(o.Cols)-1)] {
-			x += cw
-			out = append(out, op("m", reals(x, 0)...), op("l", reals(x, -h)...))
+	if fill, ok := colorArgs(o.HeaderFill); ok && len(heights) > 0 {
+		out = append(out, op("rg", fill...))
+		for _, s := range cells {
+			if s.Row == 0 {
+				x, y, cw, ch := o.cellBox(s, heights)
+				out = append(out, op("re", reals(x, y-ch, cw, ch)...))
+			}
 		}
-		y := 0.0
-		for _, rh := range heights[:max(0, len(heights)-1)] {
-			y -= rh
-			out = append(out, op("m", reals(0, y)...), op("l", reals(w, y)...))
+		out = append(out, op("f"))
+	}
+	for _, s := range cells {
+		row := o.Rows[s.Row]
+		if s.Col >= len(row.Cells) || strings.TrimSpace(row.Cells[s.Col]) == "" {
+			continue
+		}
+		x, y, cw, ch := o.cellBox(s, heights)
+		cell := &Object{Kind: "text", W: cw, H: ch, Text: row.Cells[s.Col],
+			Font: o.Font, Size: o.Size, Color: o.Color, Align: o.Align, VAlign: "top", LineHeight: o.LineHeight,
+			Padding: [4]float64{o.CellPad, o.CellPad, o.CellPad, o.CellPad}}
+		ops, err := r.text(cell)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, op("q"), op("cm", reals(1, 0, 0, 1, x, y)...))
+		out = append(out, ops...)
+		out = append(out, op("Q"))
+	}
+	// Borders: a rectangle per visible cell, so merged cells have none inside.
+	if stroke, ok := colorArgs(o.Stroke); ok && o.StrokeWidth > 0 {
+		out = append(out, op("RG", stroke...), op("w", cos.Real(o.StrokeWidth)))
+		for _, s := range cells {
+			x, y, cw, ch := o.cellBox(s, heights)
+			out = append(out, op("re", reals(x, y-ch, cw, ch)...))
 		}
 		out = append(out, op("S"))
 	}

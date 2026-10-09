@@ -95,7 +95,7 @@ func Pages(d *cos.Document, ops []Op, src Sources) (specs []PageSpec, changed bo
 	}
 	for _, op := range ops {
 		switch op.Op {
-		case "page.insert", "toc":
+		case "page.insert", "toc", "table.split":
 			if find(op.NewID) >= 0 {
 				if op.Op == "toc" { // re-run with new settings
 					specs[find(op.NewID)].TOC = op.TOC

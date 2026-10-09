@@ -322,3 +322,38 @@ func TestStyledRuns(t *testing.T) {
 		t.Error("no underline")
 	}
 }
+
+// Merged cells: the text spans the merged width, a cell merged down makes
+// the rows tall enough, the covered cells are not drawn.
+func TestTableSpans(t *testing.T) {
+	env := testEnv(t)
+	face, _ := env.Face("")
+	long := "Объединённая по вертикали ячейка с длинным текстом, которому нужно много строк"
+	tbl := &Object{ID: "o1", Kind: "table", Matrix: [6]float64{1, 0, 0, 1, 60, 500}, Cols: []float64{120, 80, 80},
+		Rows: []TableRow{
+			{Cells: []string{"Шапка таблицы, занимающая всю её ширину", "скрыто", "скрыто"}},
+			{Cells: []string{long, "a", "b"}},
+			{Cells: []string{"", "c", "d"}},
+		},
+		Spans:  []Span{{Row: 0, Col: 0, Rows: 1, Cols: 3}, {Row: 1, Col: 0, Rows: 2, Cols: 1}},
+		Stroke: "#000000", StrokeWidth: 0.5, CellPad: 3, Size: 10, Opacity: 1}
+	plain := *tbl
+	plain.Spans = nil
+	h, hp := tbl.TableLayout(face), plain.TableLayout(face)
+	if h[0] >= hp[0] { // one line across three columns instead of wrapping in one
+		t.Errorf("header %v vs %v", h[0], hp[0])
+	}
+	need := Wrap(face, long, 10, 120-6)
+	if got := h[1] + h[2]; got < float64(len(need)-1)*1.2*10+10 {
+		t.Errorf("merged rows %v too short for %d lines", h, len(need))
+	}
+	if s, first := tbl.SpanAt(2, 0); first || s.Row != 1 {
+		t.Errorf("covered cell: %+v %v", s, first)
+	}
+	d := open(t, "chrome.pdf")
+	d2 := edited(t, d, []Op{{Op: "add", Page: d.Pages()[1].Ref.Num, Object: tbl}})
+	texts := strings.Join(pageTexts(d2, 1), "|")
+	if strings.Contains(texts, "скрыто") || !strings.Contains(texts, "Шапка таблицы, занимающая всю её ширину") {
+		t.Errorf("page text: %s", texts)
+	}
+}

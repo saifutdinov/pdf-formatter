@@ -47,7 +47,9 @@ type editState struct {
 var docOps = map[string]bool{"meta": true, "sanitize": true, "outline": true, "labels": true, "hf": true, "security": true, "field": true, "flatten": true,
 	"page.insert": true, "page.delete": true, "page.move": true, "page.rotate": true, "page.margins": true, "toc": true, "page.import": true}
 
-func isPageOp(op edit.Op) bool { return strings.HasPrefix(op.Op, "page.") || op.Op == "toc" }
+func isPageOp(op edit.Op) bool {
+	return strings.HasPrefix(op.Op, "page.") || op.Op == "toc" || op.Op == "table.split"
+}
 
 // specs returns the current page list, cached per revision.
 func (d *Doc) specs() []edit.PageSpec {
@@ -118,7 +120,7 @@ func (d *Doc) validatePageOp(op edit.Op) error {
 	specs := d.specs()
 	exists := func(id int) bool { return d.pageIndex(id) >= 0 }
 	switch op.Op {
-	case "page.insert", "toc":
+	case "page.insert", "toc", "table.split":
 		if op.After != 0 && !exists(op.After) {
 			return &userError{"Нет такой страницы"}
 		}
@@ -195,6 +197,91 @@ func normalizeRuns(o *edit.Object) {
 		return
 	}
 	o.Text = edit.RunsText(o.Runs)
+}
+
+// splitTable cuts a table at the bottom margin of its page: the rows that
+// fit stay, the rest moves to a new page inserted after it, under the
+// header row repeated, at the same left edge below the top margin. Margins
+// mirror the table's left margin (at least 1 cm). Merged rows are never cut.
+func (d *Doc) splitTable(op edit.Op, id string) (edit.Op, error) {
+	i := d.pageIndex(op.Page)
+	if i < 0 || len(op.Blocks) != 1 {
+		return op, &userError{"Выберите таблицу"}
+	}
+	d.mu.Lock()
+	ed, err := edit.Fold(d.log.Ops)
+	rev := d.log.Rev
+	d.mu.Unlock()
+	if err != nil {
+		return op, err
+	}
+	var t *edit.Object
+	if pe := ed.Pages[op.Page]; pe != nil {
+		for _, o := range pe.Objects {
+			if o.ID == op.Blocks[0] && o.Kind == "table" {
+				c := *o
+				t = &c
+			}
+		}
+	}
+	if t == nil {
+		return op, &userError{"Выберите таблицу"}
+	}
+	if m := t.Matrix; m[0] != 1 || m[1] != 0 || m[2] != 0 || m[3] != 1 {
+		return op, &userError{"Повёрнутую таблицу не перенести"}
+	}
+	face, err := d.env().Face(t.Font)
+	if err != nil {
+		return op, err
+	}
+	heights := t.TableLayout(face)
+	sp := d.specs()[i]
+	box := sp.Box()
+	margin := max(28.35, t.Matrix[4]-box[0])
+	y, k := t.Matrix[5], 0
+	for k < len(heights) && y-heights[k] >= box[1]+margin {
+		y -= heights[k]
+		k++
+	}
+	for moved := true; moved; {
+		moved = false
+		for _, s := range t.Spans {
+			if s.Row < k && k < s.Row+s.Rows {
+				k, moved = s.Row, true
+			}
+		}
+	}
+	header := 0
+	if t.HeaderFill != "" {
+		header = 1
+	}
+	switch {
+	case k >= len(t.Rows):
+		return op, &userError{"Таблица помещается на странице"}
+	case k <= header:
+		return op, &userError{"На этой странице не помещается ни одной строки таблицы"}
+	}
+	first, rest := *t, *t
+	first.Rows = slices.Clone(t.Rows[:k])
+	rest.ID = id
+	rest.Rows = append(slices.Clone(t.Rows[:header]), t.Rows[k:]...)
+	first.Spans, rest.Spans = nil, nil
+	for _, s := range t.Spans {
+		if s.Row+s.Rows <= k {
+			first.Spans = append(first.Spans, s)
+			if s.Row+s.Rows <= header { // the header row is repeated with its merges
+				rest.Spans = append(rest.Spans, s)
+			}
+			continue
+		}
+		s.Row += header - k
+		rest.Spans = append(rest.Spans, s)
+	}
+	rest.Matrix[5] = box[3] - margin
+	op.Object, op.Next = &first, &rest
+	op.After, op.NewID = op.Page, -(rev + 1)
+	op.Size = [2]float64{sp.Media[2] - sp.Media[0], sp.Media[3] - sp.Media[1]}
+	return op, nil
 }
 
 // lastOp names the operation undo (or redo) would take back.
@@ -494,6 +581,9 @@ func (d *Doc) complete(op edit.Op) (edit.Op, error) {
 	d.mu.Lock()
 	id := fmt.Sprintf("o%d", d.log.Rev+1)
 	d.mu.Unlock()
+	if op.Op == "table.split" {
+		return d.splitTable(op, id)
+	}
 	if op.Op == "add" && op.Object != nil && op.Object.ID == "" {
 		o := *op.Object
 		o.ID = id
