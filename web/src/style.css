@@ -1169,3 +1169,26 @@ a {
   overflow: visible;
   cursor: text;
 }
+
+/* Form fields over their widgets (view mode) */
+.form-field {
+  position: absolute;
+  z-index: 4;
+  margin: 0;
+  padding: 0 2px;
+  border: 1px solid rgb(36 99 235 / 0.45);
+  border-radius: 2px;
+  background: rgb(232 238 255 / 0.92);
+  color: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  resize: none;
+}
+.form-field:focus {
+  outline: 2px solid var(--accent);
+  background: #fff;
+}
+.form-field.check {
+  accent-color: var(--accent);
+  background: none;
+  border: none;
+}

@@ -17,6 +17,7 @@ import (
 
 	"pdf-formatter/pdf/content"
 	"pdf-formatter/pdf/cos"
+	"pdf-formatter/pdf/form"
 	"pdf-formatter/pdf/layout"
 	"pdf-formatter/pdf/meta"
 	"pdf-formatter/pdf/nav"
@@ -54,6 +55,8 @@ type Op struct {
 	From    []int      `json:"from,omitempty"`    // page.import: page indices, empty = all
 	NewIDs  []int      `json:"newIds,omitempty"`  // page.import: ids of the copies (negative)
 	Decrypt bool       `json:"decrypt,omitempty"` // security: the clean copy drops the encryption
+	Field   string     `json:"field,omitempty"`   // field: fully qualified name
+	Value   string     `json:"value,omitempty"`   // field: the new value (a state name for buttons)
 }
 
 // IsLink reports whether an id names a link annotation.
@@ -83,6 +86,7 @@ func ParseColor(s string) (*[3]float64, error) {
 
 // PageEdit is the folded result of the log for one page.
 type PageEdit struct {
+	flat     []flatWidget        // form widgets drawn into the content (set by Apply)
 	Blocks   map[string]Effect   // original blocks
 	Members  map[string][]string // their items, where recorded (Op.Members)
 	owner    map[string]string   // item → block of Members
@@ -97,7 +101,7 @@ func newPageEdit() *PageEdit {
 }
 
 func (pe *PageEdit) empty() bool {
-	return len(pe.Blocks) == 0 && len(pe.Objects) == 0 && len(pe.Links) == 0 && len(pe.DelLinks) == 0 && pe.Fit == nil
+	return len(pe.Blocks) == 0 && len(pe.Objects) == 0 && len(pe.Links) == 0 && len(pe.DelLinks) == 0 && pe.Fit == nil && len(pe.flat) == 0
 }
 
 func (pe *PageEdit) setLink(l nav.Link) {
@@ -152,6 +156,8 @@ type Edits struct {
 	Labels   *[]Label          // last page labels, if any
 	HF       []HFItem          // headers and footers
 	Decrypt  bool              // clean copy without encryption (last security op)
+	Fields   map[string]string // form field values by name
+	Flatten  bool              // form fields become page content
 }
 
 // Fold replays the log into per-page edits.
@@ -180,6 +186,15 @@ func Fold(ops []Op) (*Edits, error) {
 			continue
 		case "security":
 			ed.Decrypt = op.Decrypt
+			continue
+		case "field":
+			if ed.Fields == nil {
+				ed.Fields = map[string]string{}
+			}
+			ed.Fields[op.Field] = op.Value
+			continue
+		case "flatten":
+			ed.Flatten = true
 			continue
 		case "page.insert", "page.delete", "page.move", "page.rotate", "page.margins", "toc", "page.import":
 			continue // folded by Pages
@@ -342,6 +357,16 @@ func Apply(d *cos.Document, ops []Op, env Env) (*cos.Update, error) {
 	if ed.Meta != nil {
 		title = ed.Meta.Title
 	}
+	// Form values first: flattening draws the new appearances.
+	if len(ed.Fields) > 0 {
+		if err := r.fill(form.Read(d, catalog), ed.Fields); err != nil {
+			return nil, err
+		}
+	}
+	var flat map[cos.Ref][]flatWidget
+	if ed.Flatten {
+		flat = r.flattenPlan(form.Read(u, catalog))
+	}
 	for i, sp := range specs {
 		pe := edits[sp.ID]
 		if pe == nil {
@@ -361,6 +386,9 @@ func Apply(d *cos.Document, ops []Op, env Env) (*cos.Update, error) {
 		}
 		extra.Objects = append(extra.Objects, hfObjects(ed.HF, sp, i, len(specs), labels, title)...)
 		extra.Fit = sp.Fit
+		if sp.Orig >= 0 {
+			extra.flat = flat[orig[sp.Orig].Ref]
+		}
 		if extra.empty() {
 			continue
 		}
@@ -393,6 +421,12 @@ func Apply(d *cos.Document, ops []Op, env Env) (*cos.Update, error) {
 		meta.Write(u, *ed.Meta)
 	}
 	meta.Clean(u, ed.Sanitize)
+	if ed.Flatten {
+		root := u.Root().(cos.Ref)
+		cat := cos.Copy(u.Dict(root)).(cos.Dict)
+		delete(cat, "AcroForm")
+		u.Set(root, cat)
+	}
 	return u, nil
 }
 
@@ -464,7 +498,7 @@ func (r *renderer) page(p cos.Page, pe *PageEdit) error {
 		resChanged = changed
 	}
 	var objOps []content.Op
-	if len(pe.Objects) > 0 {
+	if len(pe.Objects) > 0 || len(pe.flat) > 0 {
 		r.res, r.gs = res, map[float64]cos.Name{}
 		for _, o := range pe.Objects {
 			ops, err := r.object(o)
@@ -472,6 +506,11 @@ func (r *renderer) page(p cos.Page, pe *PageEdit) error {
 				return err
 			}
 			objOps = append(objOps, ops...)
+		}
+		for _, w := range pe.flat {
+			n := r.name("PFw")
+			r.addRes("XObject", n, w.ap)
+			objOps = append(objOps, op("q"), op("cm", reals(w.cm[:]...)...), op("Do", n), op("Q"))
 		}
 		resChanged = true
 	}
@@ -517,7 +556,7 @@ func (r *renderer) page(p cos.Page, pe *PageEdit) error {
 	if resChanged {
 		page["Resources"] = res
 	}
-	if len(pe.Links) > 0 || len(pe.DelLinks) > 0 || pe.Fit != nil {
+	if len(pe.Links) > 0 || len(pe.DelLinks) > 0 || pe.Fit != nil || len(pe.flat) > 0 {
 		page["Annots"] = r.annots(p, pe, page, analysis)
 	}
 	u.Set(p.Ref, page)
@@ -559,6 +598,9 @@ func (r *renderer) annots(p cos.Page, pe *PageEdit, page cos.Dict, pg func() *la
 		id := fmt.Sprintf("ai%d", i)
 		if ref, ok := a.(cos.Ref); ok {
 			id = fmt.Sprintf("a%d", ref.Num)
+			if slices.ContainsFunc(pe.flat, func(w flatWidget) bool { return w.annot == ref }) {
+				continue // now part of the page content
+			}
 		}
 		if pe.DelLinks[id] || replaced[id] {
 			continue

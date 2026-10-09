@@ -304,6 +304,16 @@ func routes(store *Store, lib *Library, web http.FileSystem) *http.ServeMux {
 		writeJSON(w, map[string]any{"meta": d.Meta, "pages": pages, "state": d.State(), "security": d.Security()})
 	})
 
+	mux.HandleFunc("GET /api/docs/{id}/fields", func(w http.ResponseWriter, r *http.Request) {
+		d, err := store.Get(r.PathValue("id"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		fields, flat := d.FieldsUI()
+		writeJSON(w, map[string]any{"fields": fields, "flattened": flat})
+	})
+
 	mux.HandleFunc("POST /api/docs/{id}/unlock", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Password string }
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {

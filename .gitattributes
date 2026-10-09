@@ -1,0 +1,6 @@
+# Byte-exact files: no line-ending conversion (a PDF xref needs its CRLFs).
+*.pdf binary
+*.ttf binary
+*.ttc binary
+*.otf binary
+*.png binary

@@ -35,6 +35,7 @@ export function DocPanel({ id, rev, run }: { id: string; rev?: number; run: (p: 
   const [custom, setCustom] = useState<[string, string][]>([])
   const [saved, setSaved] = useState(false)
   const [sec, setSec] = useState<{ security: Security | null; decrypt: boolean } | null>(null)
+  const [fields, setFields] = useState<{ count: number; flattened: boolean } | null>(null)
 
   useEffect(() => {
     api.meta(id).then((r) => {
@@ -42,6 +43,7 @@ export function DocPanel({ id, rev, run }: { id: string; rev?: number; run: (p: 
       setCustom(Object.entries(r.meta.custom ?? {}))
       setSec({ security: r.security, decrypt: r.decrypt })
     })
+    api.fields(id).then((r) => setFields({ count: r.fields.length, flattened: r.flattened }))
   }, [id, rev])
 
   if (!meta) return <p class="muted pad">Загружаю…</p>
@@ -119,6 +121,28 @@ export function DocPanel({ id, rev, run }: { id: string; rev?: number; run: (p: 
         Обычное «Скачать» дописывает изменения в конец файла: старые значения метаданных и удалённое содержимое остаются в предыдущих ревизиях
         и легко извлекаются. Для передачи файла другим людям используйте «Чистая копия».
       </p>
+
+      {fields && (fields.count > 0 || fields.flattened) && (
+        <>
+          <h4>Форма</h4>
+          {fields.flattened ? (
+            <p class="small">Поля зафиксированы: их значения стали частью страниц.</p>
+          ) : (
+            <>
+              <p class="small">Полей: {fields.count}. Заполняйте их в режиме «Просмотр».</p>
+              <button
+                class="btn"
+                onClick={() =>
+                  confirm('Зафиксировать поля? Значения станут частью страниц, править их как поля будет нельзя (отменить можно).') &&
+                  run(api.edit(id, { op: 'flatten', page: 0 }))
+                }
+              >
+                Зафиксировать поля
+              </button>
+            </>
+          )}
+        </>
+      )}
 
       {sec?.security && (
         <>

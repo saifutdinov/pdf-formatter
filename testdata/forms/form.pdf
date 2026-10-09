@@ -1,0 +1,79 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R 7 0 R 10 0 R 13 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 14 0 R >> >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 14 0 R >> >> /Contents 15 0 R /Annots [4 0 R 6 0 R 7 0 R 11 0 R 12 0 R 13 0 R] >>
+endobj
+4 0 obj
+<< /FT /Tx /T (name) /Type /Annot /Subtype /Widget /Rect [150 700 400 720] /P 3 0 R /DA (/Helv 12 Tf 0 0 0.6 rg) /MK << /BG [0.93 0.95 1] /BC [0.5 0.5 0.5] >> /F 4 >>
+endobj
+5 0 obj
+<< /T (person) /Kids [6 0 R] >>
+endobj
+6 0 obj
+<< /FT /Tx /Ff 4096 /T (city) /Parent 5 0 R /Type /Annot /Subtype /Widget /Rect [150 620 400 680] /P 3 0 R /DA (/Helv 0 Tf 0 g) /F 4 >>
+endobj
+7 0 obj
+<< /FT /Btn /T (agree) /V /Off /AS /Off /Type /Annot /Subtype /Widget /Rect [150 580 166 596] /P 3 0 R /AP << /N << /Yes 8 0 R /Off 9 0 R >> >> /F 4 >>
+endobj
+8 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 16 16] /Length 49 >>
+stream
+0 0 1 RG 2 w 3 8 m 7 3 l 13 13 l S 1 1 14 14 re S
+endstream
+endobj
+9 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 16 16] /Length 14 >>
+stream
+1 1 14 14 re S
+endstream
+endobj
+10 0 obj
+<< /FT /Btn /Ff 49152 /T (gender) /V /Off /Kids [11 0 R 12 0 R] >>
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 10 0 R /Rect [150 540 166 556] /P 3 0 R /AS /Off /AP << /N << /m 8 0 R /Off 9 0 R >> >> /F 4 >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 10 0 R /Rect [200 540 216 556] /P 3 0 R /AS /Off /AP << /N << /f 8 0 R /Off 9 0 R >> >> /F 4 >>
+endobj
+13 0 obj
+<< /FT /Ch /Ff 131072 /T (country) /Opt [[(ru) (Russia)] [(kz) (Kazakhstan)]] /V (ru) /Type /Annot /Subtype /Widget /Rect [150 500 300 516] /P 3 0 R /DA (/Helv 10 Tf 0 g) /F 4 >>
+endobj
+14 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+15 0 obj
+<<  /Length 117 >>
+stream
+BT /F1 11 Tf 50 705 Td (Name) Tj 0 -60 Td (City) Tj 0 -60 Td (Agree) Tj 0 -40 Td (Gender) Tj 0 -40 Td (Country) Tj ET
+endstream
+endobj
+xref
+0 16
+0000000000 65535 f
+0000000015 00000 n
+0000000178 00000 n
+0000000235 00000 n
+0000000412 00000 n
+0000000594 00000 n
+0000000641 00000 n
+0000000792 00000 n
+0000000959 00000 n
+0000001106 00000 n
+0000001218 00000 n
+0000001301 00000 n
+0000001454 00000 n
+0000001607 00000 n
+0000001802 00000 n
+0000001900 00000 n
+trailer
+<< /Size 16 /Root 1 0 R >>
+startxref
+2070
+%%EOF

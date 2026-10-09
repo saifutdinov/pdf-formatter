@@ -22,6 +22,7 @@ import (
 	"pdf-formatter/pdf/cos"
 	"pdf-formatter/pdf/edit"
 	"pdf-formatter/pdf/font"
+	"pdf-formatter/pdf/form"
 	"pdf-formatter/pdf/meta"
 	"pdf-formatter/pdf/nav"
 	"pdf-formatter/pdf/svg"
@@ -43,7 +44,7 @@ type editState struct {
 	Structure bool   `json:"structure,omitempty"` // the page list changed: reload it
 }
 
-var docOps = map[string]bool{"meta": true, "sanitize": true, "outline": true, "labels": true, "hf": true, "security": true,
+var docOps = map[string]bool{"meta": true, "sanitize": true, "outline": true, "labels": true, "hf": true, "security": true, "field": true, "flatten": true,
 	"page.insert": true, "page.delete": true, "page.move": true, "page.rotate": true, "page.margins": true, "toc": true, "page.import": true}
 
 func isPageOp(op edit.Op) bool { return strings.HasPrefix(op.Op, "page.") || op.Op == "toc" }
@@ -196,6 +197,74 @@ func normalizeRuns(o *edit.Object) {
 	o.Text = edit.RunsText(o.Runs)
 }
 
+// lastOp names the operation undo (or redo) would take back.
+func (d *Doc) lastOp(redo bool) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ops := d.log.Ops
+	if redo {
+		ops = d.log.Redo
+	}
+	if len(ops) == 0 {
+		return ""
+	}
+	return ops[len(ops)-1].Op
+}
+
+// FieldInfo is a form field for the UI, with its widgets on current pages.
+type FieldInfo struct {
+	form.Field
+	Widgets []widgetInfo `json:"widgets"`
+}
+
+type widgetInfo struct {
+	Page int        `json:"page"` // current page index
+	Rect [4]float64 `json:"rect"`
+	On   string     `json:"on,omitempty"`
+}
+
+// Fields returns the form fields with the values set so far, and whether
+// they were flattened.
+func (d *Doc) Fields() ([]form.Field, bool) {
+	d.mu.Lock()
+	ops := slices.Clone(d.log.Ops)
+	d.mu.Unlock()
+	ed, err := edit.Fold(ops)
+	if err != nil {
+		return nil, false
+	}
+	fields := form.Read(d.PDF, d.PDF.Dict(d.PDF.Trailer["Root"]))
+	for i := range fields {
+		if v, ok := ed.Fields[fields[i].Name]; ok {
+			fields[i].Value = v
+		}
+	}
+	return fields, ed.Flatten
+}
+
+// FieldsUI lists the fields with widgets placed on the current pages.
+func (d *Doc) FieldsUI() ([]FieldInfo, bool) {
+	fields, flat := d.Fields()
+	index := map[int]int{} // page object number → current index
+	orig := d.PDF.Pages()
+	for i, sp := range d.specs() {
+		if sp.Orig >= 0 {
+			index[orig[sp.Orig].Ref.Num] = i
+		}
+	}
+	out := []FieldInfo{}
+	for _, f := range fields {
+		fi := FieldInfo{Field: f, Widgets: []widgetInfo{}}
+		for _, w := range f.Widgets {
+			if i, ok := index[w.Page.Num]; ok && w.Page.Num != 0 {
+				fi.Widgets = append(fi.Widgets, widgetInfo{Page: i, Rect: w.Rect, On: w.On})
+			}
+		}
+		out = append(out, fi)
+	}
+	return out, flat
+}
+
 // libFontID is the library font used when text in a font of the file is
 // edited: the best match, or the default font.
 func (d *Doc) libFontID(name string, bold, italic bool) string {
@@ -227,17 +296,39 @@ func (d *Doc) Security() *securityInfo {
 }
 
 // checkEditable refuses changes the document's permissions forbid until the
-// owner password is entered (as Acrobat and Preview do).
-func (d *Doc) checkEditable() error {
-	if s := d.Security(); s != nil && !s.Editable {
+// owner password is entered (as Acrobat and Preview do); filling in form
+// fields has a permission of its own.
+func (d *Doc) checkEditable(opName string) error {
+	d.mu.Lock()
+	sec := d.sec
+	d.mu.Unlock()
+	if opName == "field" && sec.Allows(cos.PermFillForm|cos.PermAnnotate) {
+		return nil
+	}
+	if !sec.Allows(cos.PermModify) {
 		return &userError{"Документ защищён от изменений: чтобы править, введите пароль владельца"}
 	}
 	return nil
 }
 
 func (d *Doc) validate(op edit.Op) error {
-	if err := d.checkEditable(); err != nil {
+	if err := d.checkEditable(op.Op); err != nil {
 		return err
+	}
+	if op.Op == "field" || op.Op == "flatten" {
+		fields, flat := d.Fields()
+		switch {
+		case flat:
+			return &userError{"Поля формы уже зафиксированы"}
+		case op.Op == "flatten" && len(fields) == 0:
+			return &userError{"В документе нет полей формы"}
+		case op.Op == "field":
+			f := form.Find(fields, op.Field)
+			if f == nil || f.ReadOnly || !f.Valid(op.Value) {
+				return &userError{"Нельзя записать это значение в поле"}
+			}
+		}
+		return nil
 	}
 	if op.Op == "security" {
 		if s := d.Security(); s == nil || !s.Owner {
@@ -563,7 +654,7 @@ func (d *Doc) Do(op edit.Op) (editState, error) {
 }
 
 func (d *Doc) Undo() (editState, error) {
-	if err := d.checkEditable(); err != nil {
+	if err := d.checkEditable(d.lastOp(false)); err != nil {
 		return editState{}, err
 	}
 	d.mu.Lock()
@@ -581,7 +672,7 @@ func (d *Doc) Undo() (editState, error) {
 }
 
 func (d *Doc) Redo() (editState, error) {
-	if err := d.checkEditable(); err != nil {
+	if err := d.checkEditable(d.lastOp(true)); err != nil {
 		return editState{}, err
 	}
 	d.mu.Lock()

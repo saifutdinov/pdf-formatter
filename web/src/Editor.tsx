@@ -19,6 +19,7 @@ import {
   type EditOp,
   type EditState,
   type FontInfo,
+  type FormField,
   type LibFont,
   type Link,
   type PageInfo,
@@ -33,6 +34,7 @@ import { LayoutPanel } from './LayoutPanel'
 import { AttachLink, LinkProps } from './Links'
 import { OutlineEditor } from './OutlineEditor'
 import { PasswordDialog } from './PasswordDialog'
+import { FormLayer } from './FormLayer'
 import { Inspector, Thumbs } from './Sidebar'
 import { TextEditor, type TextEdit } from './TextEditor'
 import { RichTextEditor } from './RichTextEditor'
@@ -221,6 +223,16 @@ function EditorView({ id }: { id: string }) {
       task.current?.destroy()
     }
   }, [id, reloadKey])
+
+  // Form fields, filled in view mode; refreshed with every revision.
+  const [form, setForm] = useState<FormField[] | null>(null)
+  const [formHint, setFormHint] = useState(true)
+  useEffect(() => {
+    api
+      .fields(id)
+      .then((r) => setForm(r.flattened || !r.fields.length ? null : r.fields))
+      .catch(() => setForm(null))
+  }, [id, state?.rev])
 
   // Restricted documents open for viewing; changes need the owner password.
   const readonly = info?.security ? !info.security.editable : false
@@ -649,6 +661,14 @@ function EditorView({ id }: { id: string }) {
         </a>
       </header>
       {error && <div class="banner error">{error}</div>}
+      {form && editing && formHint && (
+        <div class="banner info">
+          В документе есть форма ({form.length} полей): заполняйте её в режиме <a onClick={() => setEditing(false)}>«Просмотр»</a>.
+          <button class="btn ghost small" onClick={() => setFormHint(false)}>
+            ✕
+          </button>
+        </div>
+      )}
       {readonly && (
         <div class="banner warn">
           Владелец запретил изменять этот документ: доступен только просмотр. <a onClick={() => setAsk('owner')}>Ввести пароль владельца</a>
@@ -755,8 +775,11 @@ function EditorView({ id }: { id: string }) {
               />
             )}
             overlayHTML={(i, s) =>
-              textEdit?.page === i &&
-              (!textEdit.cell ? (
+              !editing && form ? (
+                <FormLayer fields={form} index={i} page={pages[i]} scale={s} onChange={(field, value) => run(api.edit(id, { op: 'field', page: 0, field, value }))} />
+              ) : (
+                textEdit?.page === i &&
+                (!textEdit.cell ? (
                 <RichTextEditor
                   key={textEdit.blockId}
                   edit={textEdit}
@@ -776,7 +799,8 @@ function EditorView({ id }: { id: string }) {
                   onCancel={() => setTextEdit(null)}
                   onTab={textEdit.cell ? (t, back) => tabCell(textEdit, t, back) : undefined}
                 />
-              ))
+                ))
+              )
             }
           />
         ) : (

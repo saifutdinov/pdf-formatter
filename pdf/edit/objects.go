@@ -194,15 +194,24 @@ func (r *renderer) addRes(kind cos.Name, name cos.Name, v cos.Object) {
 	d[name] = v
 }
 
-func (r *renderer) fontFor(id string) (*fontEmbed, cos.Name, error) {
+// embed returns the embedding of a library font, shared by the document.
+func (r *renderer) embed(id string) (*fontEmbed, error) {
 	fe, ok := r.embeds[id]
 	if !ok {
 		face, err := r.env.Face(id)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		fe = &fontEmbed{e: font.NewEmbedding(face), ref: r.u.Add(nil)}
 		r.embeds[id] = fe
+	}
+	return fe, nil
+}
+
+func (r *renderer) fontFor(id string) (*fontEmbed, cos.Name, error) {
+	fe, err := r.embed(id)
+	if err != nil {
+		return nil, "", err
 	}
 	n := r.name("PFf")
 	r.addRes("Font", n, fe.ref)

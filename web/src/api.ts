@@ -11,6 +11,21 @@ export type Meta = {
 /** A part of a text in its own style; empty fields take the object's. */
 export type Run = { text: string; font?: string; size?: number; color?: string; underline?: boolean }
 
+/** A form field and the places it is shown on the current pages. */
+export type FormField = {
+  name: string
+  type: 'text' | 'checkbox' | 'radio' | 'choice' | 'button' | 'signature'
+  value: string
+  options?: { value: string; label: string }[]
+  multiline?: boolean
+  combo?: boolean
+  readOnly?: boolean
+  maxLen?: number
+  align?: number
+  fontSize?: number
+  widgets: { page: number; rect: [number, number, number, number]; on?: string }[]
+}
+
 /** Protection of an encrypted document. */
 export type Security = { method: string; owner: boolean; password: boolean; editable: boolean }
 
@@ -81,6 +96,8 @@ export type EditOp = {
     | 'meta'
     | 'sanitize'
     | 'security'
+    | 'field'
+    | 'flatten'
     | 'link'
     | 'outline'
     | 'page.insert'
@@ -102,6 +119,8 @@ export type EditOp = {
   link?: Partial<Link>
   outline?: OutlineItem[]
   decrypt?: boolean // security: the clean copy drops the encryption
+  field?: string // field: fully qualified name
+  value?: string // field: new value (a state name for buttons)
   after?: number
   size?: [number, number]
   rotate?: number
@@ -241,6 +260,7 @@ export const passwords = new Map<string, string>()
 export const api = {
   list: () => call<Meta[]>('/api/docs'),
   doc: (id: string) => call<DocInfo>(`/api/docs/${id}`),
+  fields: (id: string) => call<{ fields: FormField[]; flattened: boolean }>(`/api/docs/${id}/fields`),
   unlock: (id: string, password: string) =>
     call<{ ok: boolean }>(`/api/docs/${id}/unlock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }),
   remove: (id: string) => call<{ ok: boolean }>(`/api/docs/${id}`, { method: 'DELETE' }),
