@@ -23,6 +23,7 @@ import (
 	"pdf-formatter/pdf/edit"
 	"pdf-formatter/pdf/font"
 	"pdf-formatter/pdf/form"
+	"pdf-formatter/pdf/layout"
 	"pdf-formatter/pdf/meta"
 	"pdf-formatter/pdf/nav"
 	"pdf-formatter/pdf/svg"
@@ -528,10 +529,15 @@ func (d *Doc) validate(op edit.Op) error {
 	}
 	known := map[string]bool{}
 	sp := d.specs()[i]
-	if sp.Orig >= 0 {
-		for _, b := range d.An.Page(sp.Orig) {
-			known[b.ID] = true
-		}
+	var orig []blockJSON
+	switch {
+	case sp.Orig >= 0:
+		orig = d.An.Page(sp.Orig)
+	case sp.Import != nil:
+		orig = d.importedBlocks(*sp.Import)
+	}
+	for _, b := range orig {
+		known[b.ID] = true
 	}
 	if pe := edits.Pages[op.Page]; pe != nil {
 		for _, o := range pe.Objects {
@@ -1158,6 +1164,30 @@ func (d *Doc) source(asset string) *cos.Document {
 	return s
 }
 
+// importedBlocks analyses a page copied from an uploaded PDF in its source
+// file: the copy has the same content, so the same blocks and items.
+func (d *Doc) importedBlocks(im edit.Source) []blockJSON {
+	src := d.source(im.Asset)
+	if src == nil || im.Index < 0 || im.Index >= len(src.Pages()) {
+		return nil
+	}
+	key := fmt.Sprint(im.Asset, "#", im.Index)
+	d.srcMu.Lock()
+	b, ok := d.imported[key]
+	d.srcMu.Unlock()
+	if ok {
+		return b
+	}
+	b = pageBlocks(layout.Analyze(src, src.Pages()[im.Index], content.NewFontCache()))
+	d.srcMu.Lock()
+	if d.imported == nil {
+		d.imported = map[string][]blockJSON{}
+	}
+	d.imported[key] = b
+	d.srcMu.Unlock()
+	return b
+}
+
 func (d *Doc) env() edit.Env {
 	return edit.Env{
 		PDF:   d.source,
@@ -1227,8 +1257,11 @@ func (d *Doc) SaveAsset(name string, r io.Reader) (map[string]any, error) {
 func (d *Doc) Blocks(i int) ([]blockJSON, error) {
 	sp := d.specs()[i]
 	var orig []blockJSON
-	if sp.Orig >= 0 {
+	switch {
+	case sp.Orig >= 0:
 		orig = d.An.Page(sp.Orig)
+	case sp.Import != nil:
+		orig = d.importedBlocks(*sp.Import)
 	}
 	d.mu.Lock()
 	ops := slices.Clone(d.log.Ops)

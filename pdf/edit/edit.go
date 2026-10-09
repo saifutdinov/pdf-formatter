@@ -90,6 +90,7 @@ func ParseColor(s string) (*[3]float64, error) {
 // PageEdit is the folded result of the log for one page.
 type PageEdit struct {
 	flat     []flatWidget        // form widgets drawn into the content (set by Apply)
+	imported bool                // a page copied from another PDF in this update (set by Apply)
 	Blocks   map[string]Effect   // original blocks
 	Members  map[string][]string // their items, where recorded (Op.Members)
 	owner    map[string]string   // item → block of Members
@@ -414,6 +415,7 @@ func Apply(d *cos.Document, ops []Op, env Env) (*cos.Update, error) {
 		if sp.Orig >= 0 {
 			extra.flat = flat[orig[sp.Orig].Ref]
 		}
+		extra.imported = sp.Import != nil
 		if extra.empty() {
 			continue
 		}
@@ -511,7 +513,13 @@ func (r *renderer) page(p cos.Page, pe *PageEdit) error {
 	var pg *layout.Page
 	analysis := func() *layout.Page {
 		if pg == nil {
-			pg = layout.Analyze(u.Doc, p, r.env.Fonts)
+			// A copied page lives in the update, its objects numbered anew
+			// every time: fonts are not shared with the document's cache.
+			if pe.imported {
+				pg = layout.Analyze(u, p, content.NewFontCache())
+			} else {
+				pg = layout.Analyze(u.Doc, p, r.env.Fonts)
+			}
 		}
 		return pg
 	}

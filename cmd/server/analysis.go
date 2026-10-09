@@ -142,43 +142,7 @@ func (a *Analysis) Page(i int) []blockJSON {
 	a.mu.Unlock()
 
 	pg := layout.Analyze(a.doc, a.doc.Pages()[i], a.fonts)
-	blocks := make([]blockJSON, 0, len(pg.Blocks))
-	for _, b := range pg.Blocks {
-		for k := range b.Quad {
-			b.Quad[k] = round2(b.Quad[k])
-		}
-		bj := blockJSON{ID: b.ID, Kind: b.Kind, Quad: b.Quad, Angle: round2(b.Angle), Text: b.Text, Size: round2(b.Size),
-			Invisible: b.Invisible, Artifact: b.Artifact, InForm: b.InForm}
-		if b.Flow != b.Text {
-			bj.Flow = b.Flow
-		}
-		for _, k := range b.Items {
-			bj.Items = append(bj.Items, layout.ItemID(pg.Items[k]))
-		}
-		if b.Kind == "text" || b.Kind == "path" {
-			bj.Color = hexColor(b.Color)
-		}
-		if b.Font != nil {
-			bj.Font, bj.Bold, bj.Italic = b.Font.Name, b.Font.Bold, b.Font.Italic
-			bj.FontRef = pg.Items[b.Items[0]].State.FontRef.Num
-		}
-		for _, r := range b.Runs {
-			it := pg.Items[r.Item]
-			s := textStyle{Text: r.Text, Size: round2(it.Size), Color: hexColor(it.State.Fill)}
-			if f := it.State.Font; f != nil {
-				s.Font, s.Bold, s.Italic = f.Name, f.Bold, f.Italic
-			}
-			if n := len(bj.styles); n > 0 && bj.styles[n-1].same(s) {
-				bj.styles[n-1].Text += s.Text
-			} else {
-				bj.styles = append(bj.styles, s)
-			}
-		}
-		if len(bj.styles) == 1 { // one style: the block's own fields say it all
-			bj.styles = nil
-		}
-		blocks = append(blocks, bj)
-	}
+	blocks := pageBlocks(pg)
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -319,4 +283,46 @@ func (a *Analysis) unsubscribe(ch chan event) {
 func sseEncode(e event) []byte {
 	data, _ := json.Marshal(e.Data)
 	return fmt.Appendf(nil, "event: %s\ndata: %s\n\n", e.Type, data)
+}
+
+// pageBlocks turns the blocks of an analysed page into their JSON form.
+func pageBlocks(pg *layout.Page) []blockJSON {
+	blocks := make([]blockJSON, 0, len(pg.Blocks))
+	for _, b := range pg.Blocks {
+		for k := range b.Quad {
+			b.Quad[k] = round2(b.Quad[k])
+		}
+		bj := blockJSON{ID: b.ID, Kind: b.Kind, Quad: b.Quad, Angle: round2(b.Angle), Text: b.Text, Size: round2(b.Size),
+			Invisible: b.Invisible, Artifact: b.Artifact, InForm: b.InForm}
+		if b.Flow != b.Text {
+			bj.Flow = b.Flow
+		}
+		for _, k := range b.Items {
+			bj.Items = append(bj.Items, layout.ItemID(pg.Items[k]))
+		}
+		if b.Kind == "text" || b.Kind == "path" {
+			bj.Color = hexColor(b.Color)
+		}
+		if b.Font != nil {
+			bj.Font, bj.Bold, bj.Italic = b.Font.Name, b.Font.Bold, b.Font.Italic
+			bj.FontRef = pg.Items[b.Items[0]].State.FontRef.Num
+		}
+		for _, r := range b.Runs {
+			it := pg.Items[r.Item]
+			s := textStyle{Text: r.Text, Size: round2(it.Size), Color: hexColor(it.State.Fill)}
+			if f := it.State.Font; f != nil {
+				s.Font, s.Bold, s.Italic = f.Name, f.Bold, f.Italic
+			}
+			if n := len(bj.styles); n > 0 && bj.styles[n-1].same(s) {
+				bj.styles[n-1].Text += s.Text
+			} else {
+				bj.styles = append(bj.styles, s)
+			}
+		}
+		if len(bj.styles) == 1 { // one style: the block's own fields say it all
+			bj.styles = nil
+		}
+		blocks = append(blocks, bj)
+	}
+	return blocks
 }

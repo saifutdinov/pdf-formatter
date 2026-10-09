@@ -48,6 +48,7 @@ type Doc struct {
 	specCache []edit.PageSpec
 	srcMu     sync.Mutex
 	sources   map[string]*cos.Document // uploaded PDFs for page.import
+	imported  map[string][]blockJSON   // blocks of their pages (asset#index)
 }
 
 // Store keeps documents under dir/docs/<id>/: original.pdf + meta.json.

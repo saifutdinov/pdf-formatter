@@ -209,3 +209,34 @@ func TestFooterOnRotatedPage(t *testing.T) {
 	}
 	t.Error("footer not found")
 }
+
+// Original blocks of a page copied from another PDF are edited like those
+// of the document's own pages: found in the source, rewritten in the copy.
+func TestEditImportedPage(t *testing.T) {
+	d := open(t, "quartz.pdf")
+	other, err := os.ReadFile("../../testdata/corpus/chrome.pdf")
+	if err != nil {
+		t.Skip(err)
+	}
+	testAssets["other.pdf"] = other
+	src, _ := cos.Open(other)
+	pg := layout.Analyze(src, src.Pages()[0], content.NewFontCache())
+	site := find(t, pg, "Сайт исполнителя: example.com/contract.")
+	heading := find(t, pg, "Договор оказания услуг № 42")
+	p1 := d.Pages()[0].Ref.Num
+	move := [6]float64{1, 0, 0, 1, 0, -100}
+	ops := []Op{
+		{Op: "page.import", Asset: "other.pdf", After: p1, NewIDs: []int{-10}, From: []int{0}},
+		{Op: "delete", Page: -10, Blocks: []string{site.ID}},
+		{Op: "transform", Page: -10, Blocks: []string{heading.ID}, Matrix: &move},
+	}
+	d2 := edited(t, d, ops)
+	texts := pageTexts(d2, 1)
+	if has(texts, "Сайт исполнителя") || !has(texts, "Договор оказания") {
+		t.Errorf("imported page: %v", texts)
+	}
+	after := layout.Analyze(d2, d2.Pages()[1], content.NewFontCache())
+	if got := find(t, after, heading.Text); math.Abs(got.Quad[1]-(heading.Quad[1]-100)) > 0.5 {
+		t.Errorf("heading at %v, want moved down by 100 from %v", got.Quad[1], heading.Quad[1])
+	}
+}
