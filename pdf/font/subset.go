@@ -38,15 +38,18 @@ func readTables(b []byte) (map[string][]byte, error) {
 	return out, nil
 }
 
-// Subset returns a TrueType font with only the given glyphs drawn: other
-// glyphs become empty, so glyph ids stay the same and CIDToGIDMap Identity
-// keeps working. Composite glyphs bring their components along. CFF-based
-// fonts are returned whole.
-// ponytail: CFF subsetting (charstring rewriting) is not done; add it if
-// large OpenType/CFF fonts make files too big.
+// Tables kept around a subset CFF: outlines, metrics, character map.
+var keepCFFTables = map[string]bool{
+	"head": true, "hhea": true, "hmtx": true, "maxp": true, "cmap": true, "name": true, "OS/2": true, "post": true,
+}
+
+// Subset returns the font with only the given glyphs drawn: other glyphs
+// become empty, so glyph ids stay the same and CIDToGIDMap Identity keeps
+// working. TrueType composite glyphs bring their components along; CFF
+// fonts get their charstrings emptied (cff.go).
 func (f *Face) Subset(used map[uint16]bool) ([]byte, error) {
 	if f.CFF {
-		return f.Data, nil
+		return f.subsetCFF(used)
 	}
 	t, err := readTables(f.Data)
 	if err != nil {
@@ -145,6 +148,43 @@ func (f *Face) Subset(used map[uint16]bool) ([]byte, error) {
 		if tag == "post" && len(data) > 32 { // drop glyph names: format 3
 			data = slices.Clone(data[:32])
 			binary.BigEndian.PutUint32(data, 0x00030000)
+		}
+		out = append(out, table{tag, data})
+	}
+	slices.SortFunc(out, func(a, b table) int {
+		if a.tag < b.tag {
+			return -1
+		}
+		return 1
+	})
+	return writeSfnt(f.Data[:4], out), nil
+}
+
+func (f *Face) subsetCFF(used map[uint16]bool) ([]byte, error) {
+	t, err := readTables(f.Data)
+	if err != nil {
+		return nil, err
+	}
+	cff, err := subsetCFF(t["CFF "], used)
+	if err != nil {
+		return nil, err
+	}
+	out := []table{{"CFF ", cff}}
+	for tag, data := range t {
+		if !keepCFFTables[tag] {
+			continue
+		}
+		switch tag {
+		case "head":
+			data = slices.Clone(data)
+			if len(data) >= 12 {
+				binary.BigEndian.PutUint32(data[8:], 0) // checkSumAdjustment, set by writeSfnt
+			}
+		case "post":
+			if len(data) > 32 { // drop glyph names: format 3
+				data = slices.Clone(data[:32])
+				binary.BigEndian.PutUint32(data, 0x00030000)
+			}
 		}
 		out = append(out, table{tag, data})
 	}

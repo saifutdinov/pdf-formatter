@@ -59,14 +59,19 @@ func (e *Embedding) WriteAt(u *cos.Update, ref cos.Ref) {
 	if name == "" {
 		name = "Font"
 	}
+	// Only the used glyphs; the subset tag marks it as such (§9.6.4).
+	used := map[uint16]bool{}
+	for g := range e.used {
+		used[g] = true
+	}
 	file := &cos.Stream{Dict: cos.Dict{"Filter": cos.Name("FlateDecode"), "Subtype": cos.Name("OpenType")}, Data: f.Deflated()}
 	fileKey, subtype := cos.Name("FontFile3"), cos.Name("CIDFontType0")
-	if !f.CFF {
-		// Only the used glyphs; the subset tag marks it as such (§9.6.4).
-		used := map[uint16]bool{}
-		for g := range e.used {
-			used[g] = true
+	if f.CFF {
+		if data, err := f.Subset(used); err == nil {
+			file.Data = cos.Deflate(data)
+			name = cos.Name(subsetTag(e.gids()) + "+" + string(name))
 		}
+	} else {
 		if data, err := f.Subset(used); err == nil {
 			file = &cos.Stream{Dict: cos.Dict{"Filter": cos.Name("FlateDecode"), "Length1": cos.Int(len(data))}, Data: cos.Deflate(data)}
 			name = cos.Name(subsetTag(e.gids()) + "+" + string(name))
