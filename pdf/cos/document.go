@@ -8,7 +8,7 @@ import (
 
 var (
 	ErrNotPDF    = errors.New("pdf: not a PDF file")
-	ErrEncrypted = errors.New("pdf: encrypted documents are not supported")
+	ErrEncrypted = errors.New("pdf: unsupported encryption")
 )
 
 // Document is a parsed, immutable PDF file. Objects are parsed lazily and
@@ -20,7 +20,9 @@ type Document struct {
 
 	Trailer       Dict
 	Version       string
-	Reconstructed bool // xref was rebuilt by scanning: rewrite before editing
+	Reconstructed bool      // xref was rebuilt by scanning: rewrite before editing
+	Security      *Security // nil unless encrypted; objects read back decrypted
+	crypt         *crypt
 
 	xref       map[int]xrefEntry
 	startxref  int  // offset of the newest xref section (for /Prev)
@@ -39,8 +41,13 @@ type xrefEntry struct {
 	gen int  // generation, or index inside the object stream
 }
 
-// Open parses the file structure. Objects are read on demand.
-func Open(data []byte) (*Document, error) {
+// Open parses the file structure. Objects are read on demand. An encrypted
+// file opens if its user password is empty; otherwise use OpenPassword.
+func Open(data []byte) (*Document, error) { return OpenPassword(data, "") }
+
+// OpenPassword opens a file with the owner or user password (§7.6.4).
+// ErrPassword means the password does not fit.
+func OpenPassword(data []byte, password string) (*Document, error) {
 	hdr := bytes.Index(data[:min(len(data), 1024)], []byte("%PDF-"))
 	if hdr < 0 {
 		return nil, ErrNotPDF
@@ -64,8 +71,22 @@ func Open(data []byte) (*Document, error) {
 		}
 		d.Reconstructed = true
 	}
-	if d.Trailer["Encrypt"] != nil {
-		return d, ErrEncrypted
+	if enc := d.Trailer["Encrypt"]; enc != nil {
+		num := -1
+		if r, ok := enc.(Ref); ok {
+			num = r.Num
+		}
+		var id []byte
+		if a := d.inner.Array(d.Trailer["ID"]); len(a) > 0 {
+			s, _ := d.inner.Resolve(a[0]).(String)
+			id = []byte(s)
+		}
+		c, sec, err := newCrypt(d.inner, d.inner.Dict(enc), num, id, password)
+		if err != nil {
+			return d, err
+		}
+		d.crypt, d.Security = c, sec
+		d.resetCache() // objects read so far are still encrypted
 	}
 	return d, nil
 }
@@ -109,6 +130,9 @@ func (d *Document) get(num int) Object {
 	case !ok:
 	case e.typ == 1:
 		o, _, _ = d.parseIndirectAt(d.base + e.off)
+		if c := d.crypt; c != nil && num != c.encNum {
+			o = c.apply(o, func(b []byte, method string) []byte { return c.decrypt(b, num, e.gen, method) })
+		}
 	case e.typ == 2:
 		d.loadObjStm(e.off)
 		o = d.cache[num]

@@ -129,7 +129,7 @@ func checkDoc(t *testing.T, name string, d *Document) {
 }
 
 // validate runs qpdf --check when available (it is in the Docker test stage).
-func validate(t *testing.T, name string, b []byte) {
+func validate(t *testing.T, name string, b []byte, password ...string) {
 	t.Helper()
 	qpdf, err := exec.LookPath("qpdf")
 	if err != nil {
@@ -137,7 +137,11 @@ func validate(t *testing.T, name string, b []byte) {
 	}
 	f := filepath.Join(t.TempDir(), name)
 	os.WriteFile(f, b, 0o644)
-	if out, err := exec.Command(qpdf, "--check", f).CombinedOutput(); err != nil {
+	args := []string{"--check", f}
+	if len(password) > 0 {
+		args = append(args, "--password="+password[0])
+	}
+	if out, err := exec.Command(qpdf, args...).CombinedOutput(); err != nil {
 		t.Errorf("%s: qpdf --check: %v\n%s", name, err, out)
 	}
 }

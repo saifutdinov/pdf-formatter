@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -42,7 +43,7 @@ type editState struct {
 	Structure bool   `json:"structure,omitempty"` // the page list changed: reload it
 }
 
-var docOps = map[string]bool{"meta": true, "sanitize": true, "outline": true, "labels": true, "hf": true,
+var docOps = map[string]bool{"meta": true, "sanitize": true, "outline": true, "labels": true, "hf": true, "security": true,
 	"page.insert": true, "page.delete": true, "page.move": true, "page.rotate": true, "page.margins": true, "toc": true, "page.import": true}
 
 func isPageOp(op edit.Op) bool { return strings.HasPrefix(op.Op, "page.") || op.Op == "toc" }
@@ -184,7 +185,42 @@ func (d *Doc) validatePageOp(op edit.Op) error {
 	return nil
 }
 
+// securityInfo is the protection of an encrypted document, for the UI.
+type securityInfo struct {
+	Method   string `json:"method"`
+	Owner    bool   `json:"owner"`    // opened with the owner password
+	Password bool   `json:"password"` // a user password is needed to open it
+	Editable bool   `json:"editable"`
+}
+
+func (d *Doc) Security() *securityInfo {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.sec == nil {
+		return nil
+	}
+	return &securityInfo{Method: d.sec.Method, Owner: d.sec.Owner, Password: d.sec.User, Editable: d.sec.Allows(cos.PermModify)}
+}
+
+// checkEditable refuses changes the document's permissions forbid until the
+// owner password is entered (as Acrobat and Preview do).
+func (d *Doc) checkEditable() error {
+	if s := d.Security(); s != nil && !s.Editable {
+		return &userError{"Документ защищён от изменений: чтобы править, введите пароль владельца"}
+	}
+	return nil
+}
+
 func (d *Doc) validate(op edit.Op) error {
+	if err := d.checkEditable(); err != nil {
+		return err
+	}
+	if op.Op == "security" {
+		if s := d.Security(); s == nil || !s.Owner {
+			return &userError{"Снять защиту можно только с паролем владельца"}
+		}
+		return nil
+	}
 	if err := d.validatePageOp(op); err != nil {
 		return err
 	}
@@ -488,6 +524,9 @@ func (d *Doc) Do(op edit.Op) (editState, error) {
 }
 
 func (d *Doc) Undo() (editState, error) {
+	if err := d.checkEditable(); err != nil {
+		return editState{}, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := len(d.log.Ops)
@@ -503,6 +542,9 @@ func (d *Doc) Undo() (editState, error) {
 }
 
 func (d *Doc) Redo() (editState, error) {
+	if err := d.checkEditable(); err != nil {
+		return editState{}, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := len(d.log.Redo)
@@ -703,7 +745,7 @@ func (d *Doc) Metadata() (map[string]any, error) {
 	if ed.Meta != nil {
 		m = *ed.Meta
 	}
-	return map[string]any{"meta": m, "sanitize": ed.Sanitize}, nil
+	return map[string]any{"meta": m, "sanitize": ed.Sanitize, "security": d.Security(), "decrypt": ed.Decrypt}, nil
 }
 
 // tailLocked returns the incremental update for the current log, cached
@@ -849,6 +891,9 @@ func (d *Doc) SaveAsset(name string, r io.Reader) (map[string]any, error) {
 	res := map[string]any{"kind": "image"}
 	if bytes.HasPrefix(bytes.TrimLeft(data[:min(len(data), 1024)], "\x00\r\n\t "), []byte("%PDF-")) {
 		src, err := cos.Open(data)
+		if errors.Is(err, cos.ErrPassword) {
+			return nil, &userError{"PDF защищён паролем: снимите защиту или загрузите его как отдельный документ"}
+		}
 		if err != nil {
 			return nil, &userError{"Не удалось открыть PDF: " + err.Error()}
 		}

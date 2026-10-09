@@ -115,8 +115,14 @@ export function DocList() {
               <tr key={m.id}>
                 <td>
                   <a href={`#/doc/${m.id}`}>{m.name}</a>
+                  {m.password && (
+                    <span class="muted" title="Защищён паролем">
+                      {' '}
+                      🔒
+                    </span>
+                  )}
                 </td>
-                <td>{m.pages}</td>
+                <td>{m.pages || '—'}</td>
                 <td>{fmtSize(m.size)}</td>
                 <td>{fmtDate(m.modified)}</td>
                 <td class="actions">

@@ -45,12 +45,13 @@ export type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 
 // Range requests: for a 500-page file only the pages on screen are fetched.
 // Returns the loading task: destroy() on it frees the worker-side document.
-export function loadPdf(url: string) {
+export function loadPdf(url: string, password?: string) {
   // Copied next to the app by the build (vite.config.ts); served from
   // node_modules by the dev server.
   const data = import.meta.env.DEV ? '/node_modules/pdfjs-dist/' : '/pdfjs/'
   return pdfjs.getDocument({
     url,
+    password,
     disableAutoFetch: true,
     disableStream: true,
     rangeChunkSize: 65536,

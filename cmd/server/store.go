@@ -26,6 +26,7 @@ type Meta struct {
 	Size     int       `json:"size"`
 	Created  time.Time `json:"created"`
 	Modified time.Time `json:"modified"`
+	Password bool      `json:"password,omitempty"` // encrypted with a user password: Unlock first
 }
 
 // Doc is an opened document. The original is immutable; edits live in the
@@ -38,6 +39,7 @@ type Doc struct {
 	lib *Library
 
 	mu        sync.Mutex
+	sec       *cos.Security // nil unless encrypted; Owner after the owner password
 	log       editLog
 	tails     map[int][]byte // incremental update per recent revision
 	specRev   int
@@ -75,6 +77,7 @@ func NewStore(dir string, lib *Library) (*Store, error) {
 var (
 	errNotFound = errors.New("документ не найден")
 	errGone     = errors.New("эта версия документа уже заменена")
+	errLocked   = errors.New("документ защищён паролем")
 )
 
 // userError is shown to the user as is.
@@ -98,13 +101,16 @@ func (s *Store) Import(name string, r io.Reader) (*Meta, error) {
 		return nil, err
 	}
 	d, err := cos.Open(data)
+	locked := errors.Is(err, cos.ErrPassword)
 	switch {
+	case locked:
+		// Stored as is; it opens once the password is entered (Unlock).
 	case errors.Is(err, cos.ErrEncrypted):
-		return nil, &userError{"Документ зашифрован — такие файлы не поддерживаются"}
+		return nil, &userError{"Этот вид шифрования не поддерживается (например, по сертификату)"}
 	case err != nil:
 		return nil, &userError{"Это не PDF или файл повреждён: " + err.Error()}
 	}
-	if d.Reconstructed || !bytes.HasPrefix(data, []byte("%PDF-")) {
+	if !locked && (d.Reconstructed || !bytes.HasPrefix(data, []byte("%PDF-"))) {
 		var buf bytes.Buffer
 		if err := cos.NewUpdate(d).WriteClean(&buf); err != nil {
 			return nil, err
@@ -120,10 +126,13 @@ func (s *Store) Import(name string, r io.Reader) (*Meta, error) {
 	m := &Meta{
 		ID:       hex.EncodeToString(idb),
 		Name:     strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)),
-		Pages:    len(d.Pages()),
 		Size:     len(data),
 		Created:  now,
 		Modified: now,
+		Password: locked,
+	}
+	if !locked {
+		m.Pages = len(d.Pages())
 	}
 	dir := s.docDir(m.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -135,10 +144,18 @@ func (s *Store) Import(name string, r io.Reader) (*Meta, error) {
 	if err := s.saveMeta(m); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	s.open[m.ID] = &Doc{Meta: *m, PDF: d, An: newAnalysis(d, s.lib), dir: dir, lib: s.lib}
-	s.mu.Unlock()
+	if !locked {
+		s.mu.Lock()
+		s.open[m.ID] = s.newDoc(*m, d)
+		s.mu.Unlock()
+	}
 	return m, nil
+}
+
+func (s *Store) newDoc(m Meta, pdf *cos.Document) *Doc {
+	d := &Doc{Meta: m, PDF: pdf, An: newAnalysis(pdf, s.lib), dir: s.docDir(m.ID), lib: s.lib, sec: pdf.Security}
+	d.loadLog()
+	return d
 }
 
 func (s *Store) saveMeta(m *Meta) error {
@@ -195,13 +212,59 @@ func (s *Store) Get(id string) (*Doc, error) {
 		return nil, err
 	}
 	pdf, err := cos.Open(data)
+	if errors.Is(err, cos.ErrPassword) {
+		return nil, errLocked
+	}
 	if err != nil {
 		return nil, err
 	}
-	d := &Doc{Meta: m, PDF: pdf, An: newAnalysis(pdf, s.lib), dir: s.docDir(id), lib: s.lib}
-	d.loadLog()
+	d := s.newDoc(m, pdf)
 	s.open[id] = d
 	return d, nil
+}
+
+// Unlock opens an encrypted document with its user or owner password. The
+// password stays in memory only: after a restart it is asked again. The
+// owner password lifts the restrictions of an already open document.
+func (s *Store) Unlock(id, password string) error {
+	if !validID(id) {
+		return errNotFound
+	}
+	data, err := os.ReadFile(filepath.Join(s.docDir(id), "original.pdf"))
+	if err != nil {
+		return errNotFound
+	}
+	pdf, err := cos.OpenPassword(data, password)
+	if errors.Is(err, cos.ErrPassword) {
+		return &userError{"Неверный пароль"}
+	}
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.open[id]; ok {
+		d.mu.Lock()
+		if pdf.Security != nil && pdf.Security.Owner {
+			d.sec = pdf.Security
+		}
+		d.mu.Unlock()
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(s.docDir(id), "meta.json"))
+	if err != nil {
+		return errNotFound
+	}
+	var m Meta
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	if m.Pages == 0 { // stored locked: now the pages can be counted
+		m.Pages = len(pdf.Pages())
+		s.saveMeta(&m)
+	}
+	s.open[id] = s.newDoc(m, pdf)
+	return nil
 }
 
 func (s *Store) Delete(id string) error {

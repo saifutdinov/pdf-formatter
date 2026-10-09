@@ -1099,3 +1099,42 @@ a {
   align-items: center;
   gap: 4px;
 }
+
+/* Password dialog */
+.modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.35);
+}
+.modal {
+  width: min(400px, 100%);
+  padding: 20px;
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+}
+.modal h3 {
+  margin: 0 0 6px;
+}
+.modal input {
+  width: 100%;
+  margin: 8px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+}
+.modal .error {
+  margin: 0;
+  color: var(--danger);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

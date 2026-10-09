@@ -144,6 +144,10 @@ type Update struct {
 	resolver
 	Doc     *Document
 	Trailer Dict // entries overriding the document trailer (e.g. Info)
+	// Decrypt drops the encryption of an encrypted document in WriteClean.
+	// Otherwise everything written is encrypted like the original; an
+	// incremental update always is.
+	Decrypt bool
 	objs    map[int]Object
 	gens    map[int]int
 	next    int
@@ -232,7 +236,7 @@ func (u *Update) Tail() []byte {
 	offsets := map[int]int{}
 	for _, n := range nums {
 		offsets[n] = pos()
-		b = appendIndirect(b, Ref{n, u.gens[n]}, u.objs[n])
+		b = appendIndirect(b, Ref{n, u.gens[n]}, d.crypt.sealed(u.objs[n], n, u.gens[n]))
 	}
 	t := u.trailer()
 	for _, k := range []Name{"Prev", "XRefStm", "Type", "W", "Index", "Filter", "DecodeParms", "Length", "DL"} {
@@ -315,6 +319,14 @@ func (u *Update) WriteClean(w io.Writer) error {
 	if t["Info"] != nil {
 		keep["Info"] = t["Info"]
 	}
+	c := u.Doc.crypt
+	if u.Decrypt {
+		c = nil
+	}
+	encRef, _ := t["Encrypt"].(Ref)
+	if c != nil {
+		keep["Encrypt"] = t["Encrypt"]
+	}
 	var order []Ref
 	newNum := map[int]int{}
 	stack := []Object{keep} // iterative: long /Next chains would blow the stack
@@ -380,7 +392,11 @@ func (u *Update) WriteClean(w io.Writer) error {
 	offsets := make([]int, len(order)+1)
 	for i, r := range order {
 		offsets[i+1] = len(b)
-		b = appendIndirect(b, Ref{Num: i + 1}, remap(u.Get(r)))
+		o := remap(u.Get(r))
+		if r != encRef {
+			o = c.sealed(o, i+1, 0)
+		}
+		b = appendIndirect(b, Ref{Num: i + 1}, o)
 	}
 	xrefOff := len(b)
 	b = fmt.Appendf(b, "xref\n0 %d\n0000000000 65535 f\r\n", len(order)+1)
@@ -391,6 +407,9 @@ func (u *Update) WriteClean(w io.Writer) error {
 	nt["Size"] = Int(len(order) + 1)
 	id := newID()
 	nt["ID"] = Array{id, id}
+	if old := u.Doc.inner.Array(t["ID"]); c != nil && len(old) == 2 {
+		nt["ID"] = Array{old[0], id} // the key derives from the first id
+	}
 	b = append(b, "trailer\n"...)
 	b = AppendObject(b, nt)
 	b = fmt.Appendf(b, "\nstartxref\n%d\n%%%%EOF\n", xrefOff)

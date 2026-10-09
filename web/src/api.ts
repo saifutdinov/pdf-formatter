@@ -5,7 +5,11 @@ export type Meta = {
   size: number
   created: string
   modified: string
+  password?: boolean // encrypted with a user password: unlock first
 }
+
+/** Protection of an encrypted document. */
+export type Security = { method: string; owner: boolean; password: boolean; editable: boolean }
 
 export type PageInfo = {
   num: number // page id: object number, negative for inserted pages
@@ -32,7 +36,7 @@ export type HFItem = {
 
 export type EditState = { rev: number; canUndo: boolean; canRedo: boolean; pages?: number[]; created?: string; structure?: boolean }
 
-export type DocInfo = { meta: Meta; pages: PageInfo[]; state: EditState }
+export type DocInfo = { meta: Meta; pages: PageInfo[]; state: EditState; security?: Security | null }
 
 export type Link = {
   id: string
@@ -73,6 +77,7 @@ export type EditOp = {
     | 'replaceImage'
     | 'meta'
     | 'sanitize'
+    | 'security'
     | 'link'
     | 'outline'
     | 'page.insert'
@@ -93,6 +98,7 @@ export type EditOp = {
   sanitize?: Sanitize
   link?: Partial<Link>
   outline?: OutlineItem[]
+  decrypt?: boolean // security: the clean copy drops the encryption
   after?: number
   size?: [number, number]
   rotate?: number
@@ -208,16 +214,30 @@ function serial<T>(f: () => Promise<T>): Promise<T> {
   return p
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
   const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
-  if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`)
+  if (!r.ok) throw new ApiError(j.error ?? `HTTP ${r.status}`, r.status)
   return j as T
 }
+
+/** Passwords entered in this tab, for pdf.js: never stored anywhere else. */
+export const passwords = new Map<string, string>()
 
 export const api = {
   list: () => call<Meta[]>('/api/docs'),
   doc: (id: string) => call<DocInfo>(`/api/docs/${id}`),
+  unlock: (id: string, password: string) =>
+    call<{ ok: boolean }>(`/api/docs/${id}/unlock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }),
   remove: (id: string) => call<{ ok: boolean }>(`/api/docs/${id}`, { method: 'DELETE' }),
   upload: (file: File) => {
     const fd = new FormData()
@@ -232,7 +252,7 @@ export const api = {
   fonts: (id: string) => call<{ fonts: FontInfo[]; progress: Progress }>(`/api/docs/${id}/fonts`),
   edit: (id: string, op: EditOp) =>
     serial(() => call<EditState>(`/api/docs/${id}/ops`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(op) })),
-  meta: (id: string) => call<{ meta: DocMeta; sanitize: Sanitize }>(`/api/docs/${id}/meta`),
+  meta: (id: string) => call<{ meta: DocMeta; sanitize: Sanitize; security: Security | null; decrypt: boolean }>(`/api/docs/${id}/meta`),
   uploadAsset: (id: string, file: File) => {
     const fd = new FormData()
     fd.append('file', file)

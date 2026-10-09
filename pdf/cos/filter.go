@@ -71,6 +71,8 @@ func (r resolver) Decode(s *Stream) ([]byte, error) {
 			data, err = decode85(data)
 		case "RunLengthDecode", "RL":
 			data = runLength(data)
+		case "Crypt":
+			// Decrypted when read (or left as is by an Identity crypt filter).
 		default:
 			return data, &FilterError{f}
 		}

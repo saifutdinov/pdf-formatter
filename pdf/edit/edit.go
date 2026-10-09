@@ -48,11 +48,12 @@ type Op struct {
 	Mode    string     `json:"mode,omitempty"`    // margins: resize | fit
 	Margins [4]float64 `json:"margins,omitempty"` // margins: top, right, bottom, left (pt)
 	TOC     *TOC       `json:"toc,omitempty"`
-	Labels  []Label    `json:"labels,omitempty"` // labels: the whole set
-	HF      []HFItem   `json:"hf,omitempty"`     // hf: all headers and footers
-	Asset   string     `json:"asset,omitempty"`  // page.import: uploaded PDF
-	From    []int      `json:"from,omitempty"`   // page.import: page indices, empty = all
-	NewIDs  []int      `json:"newIds,omitempty"` // page.import: ids of the copies (negative)
+	Labels  []Label    `json:"labels,omitempty"`  // labels: the whole set
+	HF      []HFItem   `json:"hf,omitempty"`      // hf: all headers and footers
+	Asset   string     `json:"asset,omitempty"`   // page.import: uploaded PDF
+	From    []int      `json:"from,omitempty"`    // page.import: page indices, empty = all
+	NewIDs  []int      `json:"newIds,omitempty"`  // page.import: ids of the copies (negative)
+	Decrypt bool       `json:"decrypt,omitempty"` // security: the clean copy drops the encryption
 }
 
 // IsLink reports whether an id names a link annotation.
@@ -150,6 +151,7 @@ type Edits struct {
 	Outline  *[]nav.Outline    // last outline set, if any
 	Labels   *[]Label          // last page labels, if any
 	HF       []HFItem          // headers and footers
+	Decrypt  bool              // clean copy without encryption (last security op)
 }
 
 // Fold replays the log into per-page edits.
@@ -175,6 +177,9 @@ func Fold(ops []Op) (*Edits, error) {
 			continue
 		case "hf":
 			ed.HF = op.HF
+			continue
+		case "security":
+			ed.Decrypt = op.Decrypt
 			continue
 		case "page.insert", "page.delete", "page.move", "page.rotate", "page.margins", "toc", "page.import":
 			continue // folded by Pages
@@ -295,6 +300,7 @@ func Apply(d *cos.Document, ops []Op, env Env) (*cos.Update, error) {
 		env.Fonts = content.NewFontCache()
 	}
 	u := cos.NewUpdate(d)
+	u.Decrypt = ed.Decrypt
 	r := &renderer{u: u, env: env, embeds: map[string]*fontEmbed{}, images: map[string]cos.Ref{}, refs: map[int]cos.Ref{}, svgs: map[string]*svgForm{}}
 	sources := env.Sources()
 	specs, structural := Pages(d, ops, sources)

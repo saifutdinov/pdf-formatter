@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -41,6 +42,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		code, msg = http.StatusNotFound, err.Error()
 	case errors.Is(err, errGone):
 		code, msg = http.StatusGone, err.Error()
+	case errors.Is(err, errLocked):
+		code, msg = http.StatusLocked, err.Error()
 	case errors.As(err, &ue):
 		code, msg = http.StatusUnprocessableEntity, ue.msg
 	default:
@@ -298,7 +301,20 @@ func routes(store *Store, lib *Library, web http.FileSystem) *http.ServeMux {
 		for i, sp := range d.specs() {
 			pages = append(pages, pageInfo{Num: sp.ID, Box: sp.Box(), Rotate: sp.Rotate, Label: edit.LabelOf(labels, i)})
 		}
-		writeJSON(w, map[string]any{"meta": d.Meta, "pages": pages, "state": d.State()})
+		writeJSON(w, map[string]any{"meta": d.Meta, "pages": pages, "state": d.State(), "security": d.Security()})
+	})
+
+	mux.HandleFunc("POST /api/docs/{id}/unlock", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Password string }
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			writeErr(w, &userError{"Нет пароля"})
+			return
+		}
+		if err := store.Unlock(r.PathValue("id"), body.Password); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
 	})
 
 	mux.HandleFunc("DELETE /api/docs/{id}", func(w http.ResponseWriter, r *http.Request) {

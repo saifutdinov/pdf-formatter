@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import {
   api,
+  ApiError,
+  passwords,
   blocksBox,
   apply,
   cellRect,
@@ -30,6 +32,7 @@ import { loadPdf, type PDFDocumentProxy } from './pdf'
 import { LayoutPanel } from './LayoutPanel'
 import { AttachLink, LinkProps } from './Links'
 import { OutlineEditor } from './OutlineEditor'
+import { PasswordDialog } from './PasswordDialog'
 import { Inspector, Thumbs } from './Sidebar'
 import { TextEditor, type TextEdit } from './TextEditor'
 import { GAP, Viewer } from './Viewer'
@@ -114,7 +117,22 @@ function useFonts(id: string) {
   return { fonts, progress }
 }
 
+/** Asks for the password of a locked document before the editor mounts. */
 export function Editor({ id }: { id: string }) {
+  const [locked, setLocked] = useState<boolean | null>(null)
+  useEffect(() => {
+    setLocked(null)
+    api
+      .doc(id)
+      .then(() => setLocked(false))
+      .catch((e) => setLocked(e instanceof ApiError && e.status === 423))
+  }, [id])
+  if (locked === null) return null
+  if (locked) return <PasswordDialog id={id} owner={false} onDone={() => setLocked(false)} onCancel={() => (location.hash = '#/')} />
+  return <EditorView id={id} />
+}
+
+function EditorView({ id }: { id: string }) {
   const [info, setInfo] = useState<DocInfo | null>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [error, setError] = useState('')
@@ -128,6 +146,10 @@ export function Editor({ id }: { id: string }) {
   const [editing, setEditing] = useState(true)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bannerHidden, setBannerHidden] = useState(false)
+  // Encrypted documents: 'open' asks for the password, 'owner' for the
+  // owner password that lifts the restrictions.
+  const [ask, setAsk] = useState<'open' | 'owner' | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const [state, setState] = useState<EditState | null>(null)
   const [nudge, setNudge] = useState<{ page: number; ids: string[]; dx: number; dy: number } | null>(null)
   const nudgeTimer = useRef(0)
@@ -160,7 +182,7 @@ export function Editor({ id }: { id: string }) {
   const latest = useRef(0)
   const loadRev = (rev: number) => {
     const seq = ++latest.current
-    const t = loadPdf(api.fileUrl(id, rev))
+    const t = loadPdf(api.fileUrl(id, rev), passwords.get(id))
     t.promise
       .then((d) => {
         if (seq !== latest.current) return t.destroy()
@@ -170,7 +192,10 @@ export function Editor({ id }: { id: string }) {
         if (old && old !== t) setTimeout(() => old.destroy(), 2000)
       })
       .catch((e) => {
-        if (seq === latest.current) setError(`pdf.js: ${e.message}`)
+        if (seq !== latest.current) return
+        // The server has the password, this tab not yet (e.g. after a reload).
+        if (e.name === 'PasswordException') setAsk('open')
+        else setError(`pdf.js: ${e.message}`)
       })
   }
 
@@ -193,7 +218,13 @@ export function Editor({ id }: { id: string }) {
     return () => {
       task.current?.destroy()
     }
-  }, [id])
+  }, [id, reloadKey])
+
+  // Restricted documents open for viewing; changes need the owner password.
+  const readonly = info?.security ? !info.security.editable : false
+  useEffect(() => {
+    if (readonly) setEditing(false)
+  }, [readonly])
 
   const pages = info?.pages ?? []
   const maxW = Math.max(1, ...pages.map((p) => pageSize(p)[0]))
@@ -472,7 +503,12 @@ export function Editor({ id }: { id: string }) {
           <button class={`btn ${!editing ? 'active' : ''}`} onClick={() => setEditing(false)}>
             Просмотр
           </button>
-          <button class={`btn ${editing ? 'active' : ''}`} onClick={() => setEditing(true)}>
+          <button
+            class={`btn ${editing ? 'active' : ''}`}
+            disabled={readonly}
+            title={readonly ? 'Документ защищён от изменений' : undefined}
+            onClick={() => setEditing(true)}
+          >
             Правка
           </button>
         </span>
@@ -576,6 +612,24 @@ export function Editor({ id }: { id: string }) {
         </a>
       </header>
       {error && <div class="banner error">{error}</div>}
+      {readonly && (
+        <div class="banner warn">
+          Владелец запретил изменять этот документ: доступен только просмотр. <a onClick={() => setAsk('owner')}>Ввести пароль владельца</a>
+        </div>
+      )}
+      {ask && (
+        <PasswordDialog
+          id={id}
+          owner={ask === 'owner'}
+          onDone={() => {
+            setAsk(null)
+            setError('')
+            if (ask === 'owner') api.doc(id).then(setInfo)
+            else setReloadKey((k) => k + 1)
+          }}
+          onCancel={() => (ask === 'owner' ? setAsk(null) : (location.hash = '#/'))}
+        />
+      )}
       {notice && (
         <div class="banner info">
           {notice}

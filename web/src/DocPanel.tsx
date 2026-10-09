@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
-import { api, type DocMeta, type EditState, type Sanitize } from './api'
+import { api, type DocMeta, type EditState, type Sanitize, type Security } from './api'
 
 // RFC 3339 ↔ value of <input type="datetime-local"> (local time).
 const toLocal = (s: string) => {
@@ -34,11 +34,13 @@ export function DocPanel({ id, rev, run }: { id: string; rev?: number; run: (p: 
   const [autoMod, setAutoMod] = useState(true)
   const [custom, setCustom] = useState<[string, string][]>([])
   const [saved, setSaved] = useState(false)
+  const [sec, setSec] = useState<{ security: Security | null; decrypt: boolean } | null>(null)
 
   useEffect(() => {
     api.meta(id).then((r) => {
       setMeta(r.meta)
       setCustom(Object.entries(r.meta.custom ?? {}))
+      setSec({ security: r.security, decrypt: r.decrypt })
     })
   }, [id, rev])
 
@@ -117,6 +119,31 @@ export function DocPanel({ id, rev, run }: { id: string; rev?: number; run: (p: 
         Обычное «Скачать» дописывает изменения в конец файла: старые значения метаданных и удалённое содержимое остаются в предыдущих ревизиях
         и легко извлекаются. Для передачи файла другим людям используйте «Чистая копия».
       </p>
+
+      {sec?.security && (
+        <>
+          <h4>Защита</h4>
+          <p class="small">
+            Шифрование {sec.security.method}
+            {sec.security.password ? ', открывается по паролю' : ', без пароля на открытие'}
+            {sec.security.owner ? '; открыт с паролем владельца.' : '.'}
+          </p>
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={sec.decrypt}
+              disabled={!sec.security.owner}
+              onChange={(e) => run(api.edit(id, { op: 'security', page: 0, decrypt: e.currentTarget.checked }))}
+            />{' '}
+            Снять пароль и ограничения в «Чистой копии»
+          </label>
+          <p class="muted small note">
+            {sec.security.owner
+              ? '«Скачать» всегда сохраняет защиту: изменения шифруются тем же паролем.'
+              : 'Снять защиту можно после ввода пароля владельца. Изменения сохраняются зашифрованными тем же паролем.'}
+          </p>
+        </>
+      )}
     </div>
   )
 }
