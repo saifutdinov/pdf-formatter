@@ -157,3 +157,8 @@ docker build --target test .         # то же, и каждый выходно
 
 Сторонние компоненты (pdf.js, Preact, golang.org/x, шрифты) распространяются под своими
 лицензиями: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+## Как сделан
+
+Сделано с помощью [Claude Code](https://claude.com/claude-code) — ИИ-ассистента Anthropic
+для программирования.
