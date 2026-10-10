@@ -53,6 +53,10 @@
 Готовые сборки лежат в [Releases](https://github.com/saifutdinov/pdf-formatter/releases/latest).
 Внутри всё нужное, устанавливать ничего не надо.
 
+**Требования:** macOS 13 Ventura и новее, на Apple Silicon и Intel — любой MacBook Air,
+Pro, iMac или mini 2018 года и новее; Windows 10 и 11; Linux x86-64. Браузер: Chrome или
+Edge 119+, Firefox 121+, Safari 17.4+.
+
 - **macOS** (Intel и Apple Silicon) — откройте `PDF-Formatter.dmg` и перетащите
   «PDF Formatter» в «Программы». У сборки нет платной подписи Apple, поэтому при первом
   запуске разрешите её: *Системные настройки → Конфиденциальность и безопасность →

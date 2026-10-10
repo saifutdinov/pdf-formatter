@@ -1,5 +1,8 @@
-import * as pdfjs from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+// The legacy build: the modern one needs 2025–2026 browser features
+// (Math.sumPrecise, Map.getOrInsertComputed, URL.parse); this one brings
+// them along and runs in Safari 17.4+, Chrome 119+, Firefox 121+.
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -41,7 +44,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
   }
 }
 
-export type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+export type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 // Range requests: for a 500-page file only the pages on screen are fetched.
 // Returns the loading task: destroy() on it frees the worker-side document.

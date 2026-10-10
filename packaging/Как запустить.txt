@@ -5,6 +5,9 @@ PDF Formatter — редактор PDF
 (Chrome, Safari, Edge или Firefox) и работает только на вашем компьютере — файлы
 никуда не отправляются.
 
+Нужна macOS 13 Ventura или новее (Mac на Apple Silicon или Intel 2018 года и новее),
+Windows 10/11 или Linux x86-64. Браузер: Chrome/Edge 119+, Firefox 121+, Safari 17.4+.
+
 
 macOS
 -----
