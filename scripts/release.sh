@@ -8,7 +8,7 @@
 # build is for the holder of those licenses and must not be published.
 set -e
 cd "$(dirname "$0")/.."
-VERSION=$(date +%Y.%m.%d)
+VERSION=${VERSION:-$(date +%Y.%m.%d)}
 TAGS=embed
 OUT=dist
 if [ "$LICENSED" = 1 ]; then
